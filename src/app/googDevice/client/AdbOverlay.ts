@@ -86,7 +86,8 @@ export class AdbOverlay {
 
         const help = document.createElement('p');
         help.className = 'adb-help';
-        help.textContent = 'Paste an adb command below. It runs on the ws-scrcpy host and targets this emulator by default. A new external computer may need to approve the RSA authorization dialog once.';
+        help.textContent =
+            'Paste an adb command below. It runs on the ws-scrcpy host and targets this emulator by default. A new external computer may need to approve the RSA authorization dialog once.';
         const input = (this.commandInput = document.createElement('textarea'));
         input.className = 'adb-command-input';
         input.rows = 3;
@@ -300,7 +301,9 @@ export class AdbOverlay {
     }
 
     private endpoint(path: string): string {
-        const pathname = window.location.pathname.endsWith('/') ? window.location.pathname : `${window.location.pathname}/`;
+        const pathname = window.location.pathname.endsWith('/')
+            ? window.location.pathname
+            : `${window.location.pathname}/`;
         return new URL(`${pathname}api/adb/${path}`, window.location.origin).toString();
     }
 }

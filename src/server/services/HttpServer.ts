@@ -213,7 +213,9 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
             }
             try {
                 if (!AdbRemoteAccess.getInstance().getStatus(udid).enabled) {
-                    return res.status(409).json({ success: false, output: 'Enable ADB TCP access before executing commands' });
+                    return res
+                        .status(409)
+                        .json({ success: false, output: 'Enable ADB TCP access before executing commands' });
                 }
                 const args = parseAdbCommand(command, udid);
                 const result = await device.runAdbCommand(args);
@@ -227,7 +229,12 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
         this.mainApp.post(INSTALL_APK_PATH, async (req, res) => {
             const { udid, fileName, fileNames } = req.body || {};
             const names = Array.isArray(fileNames) ? fileNames : typeof fileName === 'string' ? [fileName] : undefined;
-            if (typeof udid !== 'string' || !names || !names.length || !names.every((name) => typeof name === 'string')) {
+            if (
+                typeof udid !== 'string' ||
+                !names ||
+                !names.length ||
+                !names.every((name) => typeof name === 'string')
+            ) {
                 return res.status(400).json({ success: false, output: 'udid and fileNames are required' });
             }
             const device = ControlCenter.getInstance().getDevice(udid);
@@ -245,7 +252,12 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
         });
         this.mainApp.post(FINALIZE_UPLOAD_PATH, async (req, res) => {
             const { udid, fileNames } = req.body || {};
-            if (typeof udid !== 'string' || !Array.isArray(fileNames) || !fileNames.length || !fileNames.every((name) => typeof name === 'string')) {
+            if (
+                typeof udid !== 'string' ||
+                !Array.isArray(fileNames) ||
+                !fileNames.length ||
+                !fileNames.every((name) => typeof name === 'string')
+            ) {
                 return res.status(400).json({ success: false, output: 'udid and fileNames are required' });
             }
             const device = ControlCenter.getInstance().getDevice(udid);

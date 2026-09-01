@@ -31,7 +31,9 @@ export class AdbRemoteAccess {
     private bindHost = AdbRemoteAccess.resolveBindHost();
     private readonly port = AdbRemoteAccess.resolvePort();
 
-    private constructor() {}
+    private constructor() {
+        // Singleton construction is intentionally private.
+    }
 
     public static getInstance(): AdbRemoteAccess {
         if (!this.instance) {

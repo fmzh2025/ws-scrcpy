@@ -113,11 +113,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 player: decodeURIComponent(playerCodeName),
                 ...(StreamReceiverScrcpy.isSameOriginProxyUrl(url, udid) ? {} : { ws: url }),
             };
-            const link = DeviceTracker.buildLink(
-                streamParams,
-                decodeURIComponent(playerFullName),
-                this.params,
-            );
+            const link = DeviceTracker.buildLink(streamParams, decodeURIComponent(playerFullName), this.params);
             item.appendChild(link);
         });
     }

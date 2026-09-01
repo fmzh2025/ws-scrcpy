@@ -358,8 +358,10 @@ export class StreamClientScrcpy
         this.applyNewVideoSettings(videoSettings, false);
         const element = player.getTouchableElement();
         const logger = new DragAndPushLogger(element);
-        this.filePushHandler = new FilePushHandler(element, new ScrcpyFilePushStream(this.streamReceiver), (fileNames) =>
-            this.finalizeUploadedFiles(udid, fileNames),
+        this.filePushHandler = new FilePushHandler(
+            element,
+            new ScrcpyFilePushStream(this.streamReceiver),
+            (fileNames) => this.finalizeUploadedFiles(udid, fileNames),
         );
         this.filePushHandler.addEventListener(logger);
 
@@ -413,11 +415,7 @@ export class StreamClientScrcpy
             return;
         }
         const target = event.target as HTMLElement | null;
-        if (
-            target instanceof HTMLInputElement ||
-            target instanceof HTMLTextAreaElement ||
-            target?.isContentEditable
-        ) {
+        if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable) {
             return;
         }
         const value = (event.clipboardData?.getData('text/plain') || '').replace(/\r\n/g, '\n');
