@@ -1,4 +1,5 @@
 import KeyboardSVG from '../../public/images/skin-light/ic_keyboard_678_48dp.svg';
+import RemoteKeyboardPNG from '../../public/images/skin-light/ic_remote_keyboard_input.png';
 import MoreSVG from '../../public/images/skin-light/ic_more_horiz_678_48dp.svg';
 import CameraSVG from '../../public/images/skin-light/ic_photo_camera_678_48dp.svg';
 import PowerSVG from '../../public/images/skin-light/ic_power_settings_new_678_48px.svg';
@@ -15,6 +16,7 @@ import MenuSVG from '../../public/images/buttons/menu.svg';
 import ArrowBackSVG from '../../public/images/buttons/arrow_back.svg';
 import ToggleOnSVG from '../../public/images/buttons/toggle_on.svg';
 import ToggleOffSVG from '../../public/images/buttons/toggle_off.svg';
+import AdbSVG from '../../public/images/skin-light/ic_adb_678_48dp.svg';
 
 export enum Icon {
     BACK,
@@ -26,6 +28,8 @@ export enum Icon {
     MORE,
     CAMERA,
     KEYBOARD,
+    REMOTE_KEYBOARD,
+    ADB,
     CANCEL,
     OFFLINE,
     REFRESH,
@@ -74,11 +78,20 @@ export default class SvgImage {
                 return ToggleOnSVG;
             case Icon.TOGGLE_OFF:
                 return ToggleOffSVG;
+            case Icon.ADB:
+                return AdbSVG;
             default:
                 return '';
         }
     }
     public static create(type: Icon): Element {
+        if (type === Icon.REMOTE_KEYBOARD) {
+            const image = new Image();
+            image.className = 'external-keyboard-icon';
+            image.src = RemoteKeyboardPNG;
+            image.alt = '';
+            return image;
+        }
         const dummy = document.createElement('div');
         dummy.innerHTML = this.getSvgString(type);
         const svg = dummy.children[0];

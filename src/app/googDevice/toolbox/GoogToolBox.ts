@@ -104,6 +104,16 @@ export class GoogToolBox extends ToolBox {
         }
         elements.push(keyboard);
 
+        // The external keyboard entry point is temporarily hidden. Keep the
+        // inline keyboard implementation available for a later re-enable.
+
+        const adb = new ToolBoxButton('ADB access', SvgImage.Icon.ADB);
+        adb.getElement().classList.add('adb-access-button');
+        adb.addEventListener('click', () => {
+            client.openAdbOverlay(adb.getElement());
+        });
+        elements.push(adb);
+
         if (moreBox) {
             const displayId = player.getVideoSettings().displayId;
             const id = `show_more_${udid}_${playerName}_${displayId}`;

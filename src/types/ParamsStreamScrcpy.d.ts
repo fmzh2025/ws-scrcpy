@@ -4,7 +4,7 @@ import VideoSettings from '../app/VideoSettings';
 
 export interface ParamsStreamScrcpy extends ParamsStream {
     action: ACTION.STREAM_SCRCPY;
-    ws: string;
+    ws?: string;
     fitToScreen?: boolean;
     videoSettings?: VideoSettings;
     captureKeyboard?: boolean;

@@ -79,7 +79,286 @@ body.shell {
 }
 
 body.stream {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     background-color: var(--stream-bg-color);
+}
+
+body.remote-keyboard {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--stream-bg-color);
+}
+
+.remote-keyboard-card {
+    box-sizing: border-box;
+    width: min(32rem, calc(100% - 2rem));
+    padding: 2rem;
+    border-radius: .714rem;
+    background-color: var(--main-bg-color);
+    box-shadow: 0 .357rem 1.429rem rgba(0, 0, 0, .18);
+}
+
+.remote-keyboard-card > h1 {
+    margin: 0 0 1rem;
+    font-size: 1.429rem;
+}
+
+.remote-keyboard-card > p {
+    line-height: 1.5;
+}
+
+.remote-keyboard-input {
+    box-sizing: border-box;
+    width: 100%;
+    margin: 1rem 0;
+    padding: .857rem;
+    border: 1px solid var(--button-border-color);
+    border-radius: .357rem;
+    color: var(--text-color);
+    background-color: var(--main-bg-color);
+    font-size: 1.143rem;
+}
+
+.remote-keyboard-input:focus {
+    border-color: var(--button-text-color);
+    box-shadow: 0 0 0 .214rem hsla(214, 82%, 51%, .2);
+}
+
+.remote-keyboard-status {
+    min-height: 1.5rem;
+    color: var(--text-color-light);
+}
+
+.remote-keyboard-status.error {
+    color: hsl(0, 70%, 45%);
+}
+
+.inline-keyboard-overlay {
+    position: fixed;
+    z-index: 10;
+    inset: auto;
+    display: block;
+    pointer-events: none;
+}
+
+.inline-keyboard-card {
+    position: relative;
+    box-sizing: border-box;
+    width: min(28rem, calc(100vw - 5.7rem));
+    max-height: calc(100vh - 2rem);
+    overflow: auto;
+    padding: 2rem;
+    border-radius: .714rem;
+    background-color: var(--main-bg-color);
+    box-shadow: 0 .357rem 1.429rem rgba(0, 0, 0, .28);
+    opacity: .96;
+    pointer-events: auto;
+}
+
+.inline-keyboard-card > h1 {
+    margin: 0 4.5rem 1rem 0;
+    font-size: 1.429rem;
+}
+
+.inline-keyboard-card > p {
+    line-height: 1.5;
+}
+
+.inline-keyboard-close {
+    position: absolute;
+    top: 1.5rem;
+    right: 1.5rem;
+    padding: .429rem .714rem;
+    border: 1px solid var(--button-border-color);
+    border-radius: .357rem;
+    color: var(--button-text-color);
+    background-color: var(--main-bg-color);
+    cursor: pointer;
+}
+
+.stream-paste-status {
+    position: fixed;
+    z-index: 11;
+    right: 1rem;
+    bottom: 1rem;
+    margin: 0;
+    padding: .714rem 1rem;
+    border-radius: .357rem;
+    color: var(--text-color);
+    background-color: var(--main-bg-color);
+    box-shadow: 0 .214rem .857rem rgba(0, 0, 0, .28);
+}
+
+.stream-paste-status.error {
+    color: hsl(0, 70%, 45%);
+}
+
+.adb-overlay {
+    position: fixed;
+    z-index: 11;
+    inset: auto;
+    display: block;
+    pointer-events: none;
+}
+
+.adb-card {
+    box-sizing: border-box;
+    width: min(36rem, calc(100vw - 5.7rem));
+    max-height: calc(100vh - 2rem);
+    overflow: auto;
+    padding: 1.5rem;
+    border-radius: .714rem;
+    background-color: var(--main-bg-color);
+    box-shadow: 0 .357rem 1.429rem rgba(0, 0, 0, .28);
+    opacity: .96;
+    pointer-events: auto;
+}
+
+@media (max-width: 42rem) {
+    .inline-keyboard-card,
+    .adb-card {
+        width: min(36rem, calc(100vw - 1rem));
+    }
+}
+
+.adb-header,
+.adb-status-line,
+.adb-command-row,
+.adb-actions {
+    display: flex;
+    align-items: center;
+    gap: .714rem;
+}
+
+.adb-header {
+    justify-content: space-between;
+}
+
+.adb-card h1 {
+    margin: 0;
+    font-size: 1.429rem;
+}
+
+.adb-device,
+.adb-help {
+    color: var(--text-color-light);
+}
+
+.adb-status-line {
+    margin: 1rem 0;
+    flex-wrap: wrap;
+}
+
+.adb-status {
+    padding: .214rem .5rem;
+    border-radius: .357rem;
+    font-size: .857rem;
+}
+
+.adb-status.on {
+    color: hsl(145, 70%, 30%);
+    background: hsl(145, 45%, 88%);
+}
+
+.adb-status.off {
+    color: hsl(0, 65%, 42%);
+    background: hsl(0, 45%, 90%);
+}
+
+.adb-close,
+.adb-action,
+.adb-copy {
+    padding: .429rem .714rem;
+    border: 1px solid var(--button-border-color);
+    border-radius: .357rem;
+    color: var(--button-text-color);
+    background-color: var(--main-bg-color);
+    cursor: pointer;
+}
+
+.adb-close:hover,
+.adb-action:hover,
+.adb-copy:hover {
+    filter: brightness(.95);
+}
+
+.adb-close {
+    color: var(--text-color);
+}
+
+.adb-connection-info {
+    margin: .5rem 0 1rem;
+    padding: .571rem .714rem;
+    border-radius: .357rem;
+    color: var(--text-color-light);
+    background-color: var(--header-bg-color);
+    font-family: monospace;
+}
+
+.adb-command-list {
+    display: grid;
+    gap: .5rem;
+}
+
+.adb-command-row {
+    min-width: 0;
+}
+
+.adb-command-row > span {
+    flex: 0 0 3.5rem;
+    color: var(--text-color-light);
+}
+
+.adb-command-row > code {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-family: monospace;
+}
+
+.adb-command-input {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 5rem;
+    margin: .5rem 0;
+    padding: .714rem;
+    border: 1px solid var(--button-border-color);
+    border-radius: .357rem;
+    color: var(--text-color);
+    background-color: var(--main-bg-color);
+    font-family: monospace;
+    resize: vertical;
+}
+
+.adb-command-input:focus {
+    border-color: var(--button-text-color);
+    box-shadow: 0 0 0 .214rem hsla(214, 82%, 51%, .2);
+}
+
+.adb-actions {
+    justify-content: flex-end;
+}
+
+.adb-output {
+    box-sizing: border-box;
+    min-height: 4rem;
+    max-height: 14rem;
+    overflow: auto;
+    margin: 1rem 0 0;
+    padding: .714rem;
+    border-radius: .357rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--text-color);
+    background-color: var(--header-bg-color);
+    font-family: monospace;
+}
+
+.adb-output.error {
+    color: hsl(0, 70%, 45%);
 }
 
 .terminal-container {
@@ -103,30 +382,52 @@ body.stream {
 
 .device-view {
     z-index: 1;
-    float: right;
-    display: inline-block;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .video-layer {
     position: absolute;
     z-index: 0;
+    width: 100%;
+    height: 100%;
 }
 
 .touch-layer {
     position: absolute;
     z-index: 1;
+    width: 100%;
+    height: 100%;
 }
 
 .video {
-    float: right;
+    order: 1;
+    position: relative;
     max-height: 100%;
     max-width: 100%;
     background-color: #000000;
 }
 
+.video-resize-handle {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    z-index: 3;
+    box-sizing: border-box;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-right: .357rem solid var(--button-text-color);
+    border-bottom: .357rem solid var(--button-text-color);
+    cursor: nwse-resize;
+    touch-action: none;
+}
+
 
 .control-buttons-list {
-    float: right;
+    order: 2;
+    flex: 0 0 3.715rem;
     width: 3.715rem;
     background-color: var(--control-buttons-bg-color);
 }
@@ -145,6 +446,14 @@ body.stream {
     opacity: 1;
 }
 
+.external-keyboard-button {
+    --svg-button-fill: var(--button-text-color);
+}
+
+.adb-access-button > svg {
+    color: var(--button-text-color);
+}
+
 .control-wrapper > input[type=checkbox] {
     display: none;
 }
@@ -155,6 +464,13 @@ body.stream {
 
 .control-button > svg {
     fill: var(--svg-button-fill);
+}
+
+.control-button > img.external-keyboard-icon {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
 }
 
 .control-wrapper > input[type=checkbox].two-images:checked + label > svg.image-on {

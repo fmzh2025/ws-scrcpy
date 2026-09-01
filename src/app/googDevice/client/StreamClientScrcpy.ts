@@ -30,6 +30,8 @@ import { ACTION } from '../../../common/Action';
 import { StreamReceiverScrcpy } from './StreamReceiverScrcpy';
 import { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
 import { ScrcpyFilePushStream } from '../filePush/ScrcpyFilePushStream';
+import { InlineKeyboardOverlay } from '../InlineKeyboardOverlay';
+import { AdbOverlay } from './AdbOverlay';
 
 type StartParams = {
     udid: string;
@@ -59,6 +61,10 @@ export class StreamClientScrcpy
     private player?: BasePlayer;
     private filePushHandler?: FilePushHandler;
     private fitToScreen?: boolean;
+    private videoResizeCleanup?: () => void;
+    private pasteStatusTimeout?: number;
+    private inlineKeyboard?: InlineKeyboardOverlay;
+    private adbOverlay?: AdbOverlay;
     private readonly streamReceiver: StreamReceiverScrcpy;
 
     public static registerPlayer(playerClass: PlayerClass): void {
@@ -157,7 +163,7 @@ export class StreamClientScrcpy
             action,
             player: Util.parseString(params, 'player', true),
             udid: Util.parseString(params, 'udid', true),
-            ws: Util.parseString(params, 'ws', true),
+            ws: Util.parseString(params, 'ws'),
             captureKeyboard: Util.parseBoolean(params, 'captureKeyboard', false),
         };
     }
@@ -260,6 +266,11 @@ export class StreamClientScrcpy
         this.filePushHandler = undefined;
         this.touchHandler?.release();
         this.touchHandler = undefined;
+        this.inlineKeyboard?.release();
+        this.inlineKeyboard = undefined;
+        this.adbOverlay?.release();
+        this.adbOverlay = undefined;
+        this.removePagePasteHandler();
     };
 
     public startStream({ udid, player, playerName, videoSettings, fitToScreen }: StartParams): void {
@@ -311,6 +322,13 @@ export class StreamClientScrcpy
             if (this.player) {
                 this.player.stop();
             }
+            this.videoResizeCleanup?.();
+            this.videoResizeCleanup = undefined;
+            this.inlineKeyboard?.release();
+            this.inlineKeyboard = undefined;
+            this.adbOverlay?.release();
+            this.adbOverlay = undefined;
+            this.removePagePasteHandler();
         };
 
         const googMoreBox = (this.moreBox = new GoogMoreBox(udid, player, this));
@@ -326,9 +344,11 @@ export class StreamClientScrcpy
         deviceView.appendChild(video);
         deviceView.appendChild(moreBox);
         player.setParent(video);
+        this.addVideoResizeHandle(video);
         player.pause();
 
         document.body.appendChild(deviceView);
+        document.addEventListener('paste', this.onPagePaste, true);
         if (fitToScreen) {
             const newBounds = this.getMaxSize();
             if (newBounds) {
@@ -388,6 +408,71 @@ export class StreamClientScrcpy
         this.sendMessage(event);
     }
 
+    private onPagePaste = (event: ClipboardEvent): void => {
+        if (event.defaultPrevented) {
+            return;
+        }
+        const target = event.target as HTMLElement | null;
+        if (
+            target instanceof HTMLInputElement ||
+            target instanceof HTMLTextAreaElement ||
+            target?.isContentEditable
+        ) {
+            return;
+        }
+        const value = (event.clipboardData?.getData('text/plain') || '').replace(/\r\n/g, '\n');
+        if (!value) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const { sent, unsupported } = InlineKeyboardOverlay.forwardText((message) => this.sendMessage(message), value);
+        this.showPasteStatus(sent, unsupported);
+    };
+
+    private showPasteStatus(sent: number, unsupported: number): void {
+        const id = 'stream-paste-status';
+        let status = document.getElementById(id);
+        if (!status) {
+            status = document.createElement('p');
+            status.id = id;
+            status.className = 'stream-paste-status';
+            status.setAttribute('aria-live', 'polite');
+            document.body.appendChild(status);
+        }
+        status.textContent = unsupported
+            ? `${sent} characters pasted; ${unsupported} unsupported characters skipped.`
+            : `${sent} characters pasted.`;
+        status.classList.toggle('error', unsupported > 0);
+        if (this.pasteStatusTimeout) {
+            clearTimeout(this.pasteStatusTimeout);
+        }
+        this.pasteStatusTimeout = window.setTimeout(() => status?.remove(), 3000);
+    }
+
+    private removePagePasteHandler(): void {
+        document.removeEventListener('paste', this.onPagePaste, true);
+        if (this.pasteStatusTimeout) {
+            clearTimeout(this.pasteStatusTimeout);
+            this.pasteStatusTimeout = undefined;
+        }
+        document.getElementById('stream-paste-status')?.remove();
+    }
+
+    public openRemoteKeyboard(anchor?: HTMLElement): void {
+        if (!this.inlineKeyboard) {
+            this.inlineKeyboard = new InlineKeyboardOverlay((message) => this.sendMessage(message), anchor);
+        }
+        this.inlineKeyboard.open();
+    }
+
+    public openAdbOverlay(anchor?: HTMLElement): void {
+        if (!this.adbOverlay) {
+            this.adbOverlay = new AdbOverlay(this.params.udid, anchor);
+        }
+        this.adbOverlay.open();
+    }
+
     public sendNewVideoSetting(videoSettings: VideoSettings): void {
         this.requestedVideoSettings = videoSettings;
         this.sendMessage(CommandControlMessage.createSetVideoSettingsCommand(videoSettings));
@@ -405,10 +490,83 @@ export class StreamClientScrcpy
         if (!this.controlButtons) {
             return;
         }
-        const body = document.body;
-        const width = (body.clientWidth - this.controlButtons.clientWidth) & ~15;
-        const height = body.clientHeight & ~15;
+        // Use the viewport rather than body dimensions: a flex child that is
+        // being resized can temporarily make body.scrollHeight larger than
+        // the visible area, which would otherwise allow a clipped video.
+        const width = (window.innerWidth - this.controlButtons.clientWidth) & ~15;
+        const height = window.innerHeight & ~15;
         return new Size(width, height);
+    }
+
+    private addVideoResizeHandle(video: HTMLElement): void {
+        const handle = document.createElement('div');
+        handle.className = 'video-resize-handle';
+        handle.title = 'Drag to resize';
+        handle.setAttribute('aria-label', 'Drag to resize');
+        video.appendChild(handle);
+
+        let startWidth = 0;
+        let startX = 0;
+        let aspectRatio = 1;
+        let active = false;
+        const onPointerMove = (event: PointerEvent): void => {
+            if (!active) {
+                return;
+            }
+            const bounds = this.getResizeBounds(startWidth + event.clientX - startX, aspectRatio);
+            video.style.width = `${bounds.width}px`;
+            video.style.height = `${bounds.height}px`;
+        };
+        const onPointerUp = (): void => {
+            if (!active) {
+                return;
+            }
+            active = false;
+            const rect = video.getBoundingClientRect();
+            this.resizeVideo(new Size(rect.width, rect.height));
+        };
+        const onPointerDown = (event: PointerEvent): void => {
+            event.preventDefault();
+            event.stopPropagation();
+            const rect = video.getBoundingClientRect();
+            startWidth = rect.width;
+            startX = event.clientX;
+            aspectRatio = rect.height ? rect.width / rect.height : 1;
+            active = true;
+            handle.setPointerCapture(event.pointerId);
+        };
+        handle.addEventListener('pointerdown', onPointerDown);
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+        this.videoResizeCleanup = () => {
+            handle.removeEventListener('pointerdown', onPointerDown);
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerup', onPointerUp);
+        };
+    }
+
+    private getResizeBounds(requestedWidth: number, aspectRatio: number): Size {
+        const max = this.getMaxSize();
+        const minimumWidth = Math.max(160, 160 * aspectRatio);
+        let width = Math.max(minimumWidth, requestedWidth);
+        let height = width / aspectRatio;
+        if (max && (width > max.width || height > max.height)) {
+            const scale = Math.min(max.width / width, max.height / height);
+            width *= scale;
+            height *= scale;
+        }
+        return new Size(Math.max(16, width & ~15), Math.max(16, height & ~15));
+    }
+
+    private resizeVideo(bounds: Size): void {
+        if (!this.player) {
+            return;
+        }
+        const current = this.player.getVideoSettings();
+        if (current.bounds?.equals(bounds)) {
+            return;
+        }
+        this.sendNewVideoSetting(StreamClientScrcpy.createVideoSettingsWithBounds(current, bounds));
     }
 
     private setTouchListeners(player: BasePlayer): void {
