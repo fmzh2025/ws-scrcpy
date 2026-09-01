@@ -81,7 +81,7 @@ export default class DragAndPushLogger implements DragAndPushListener {
     }
 
     public onDragEnter(): boolean {
-        this.logText('Drop APK files here', 1);
+        this.logText('Drop files here (APK installs automatically)', 1);
         return true;
     }
 

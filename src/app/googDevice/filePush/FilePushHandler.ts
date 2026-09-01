@@ -3,6 +3,12 @@ import { FilePushStream, PushResponse } from './FilePushStream';
 import { FilePushResponseStatus } from './FilePushResponseStatus';
 
 type Resolve = (response: PushResponse) => void;
+type UploadedFile = {
+    pushId: number;
+    fileName: string;
+    isApk: boolean;
+};
+type UploadCompleteHandler = (fileNames: string[]) => Promise<void>;
 
 export type PushUpdateParams = {
     pushId: number;
@@ -30,7 +36,11 @@ export default class FilePushHandler implements DragEventListener {
     private listeners: Set<DragAndPushListener> = new Set();
     private pushIdFileNameMap: Map<number, string> = new Map();
 
-    constructor(private readonly element: HTMLElement, private readonly filePushStream: FilePushStream) {
+    constructor(
+        private readonly element: HTMLElement,
+        private readonly filePushStream: FilePushStream,
+        private readonly onUploadComplete?: UploadCompleteHandler,
+    ) {
         DragAndDropHandler.addEventListener(this);
         filePushStream.on('response', this.onStreamResponse);
         filePushStream.on('error', this.onStreamError);
@@ -60,7 +70,7 @@ export default class FilePushHandler implements DragEventListener {
         return { reader, result };
     }
 
-    private async pushFile(file: File): Promise<void> {
+    private async pushFile(file: File): Promise<UploadedFile | undefined> {
         const start = Date.now();
         const { name: fileName, size: fileSize } = file;
         if (!this.filePushStream.hasConnection()) {
@@ -74,7 +84,8 @@ export default class FilePushHandler implements DragEventListener {
         this.filePushStream.sendEventNew({ id });
         const { code: pushId } = await this.waitForResponse(id);
         if (pushId <= 0) {
-            return this.logError(pushId, fileName, pushId);
+            this.logError(pushId, fileName, pushId);
+            return;
         }
 
         this.pushIdFileNameMap.set(pushId, fileName);
@@ -90,7 +101,13 @@ export default class FilePushHandler implements DragEventListener {
         }
         let receivedBytes = 0;
 
-        const processData = async ({ done, value }: { done: boolean; value?: Uint8Array }): Promise<void> => {
+        const processData = async ({
+            done,
+            value,
+        }: {
+            done: boolean;
+            value?: Uint8Array;
+        }): Promise<UploadedFile | undefined> => {
             if (done || !value) {
                 this.filePushStream.sendEventFinish({ id: pushId });
                 const { code: finishResponseCode } = await this.waitForResponse(pushId);
@@ -100,13 +117,18 @@ export default class FilePushHandler implements DragEventListener {
                     this.sendUpdate({
                         pushId,
                         fileName,
-                        message: 'success!',
+                        message: this.onUploadComplete
+                            ? /\.apk$/i.test(fileName)
+                                ? 'uploaded; waiting to save and install...'
+                                : 'uploaded; waiting to save...'
+                            : 'success!',
                         progress: 100,
                         error: false,
-                        finished: true,
+                        finished: !this.onUploadComplete,
                     });
+                    console.log(TAG, `File "${fileName}" uploaded in ${Date.now() - start}ms`);
+                    return { pushId, fileName, isApk: /\.apk$/i.test(fileName) };
                 }
-                console.log(TAG, `File "${fileName}" uploaded in ${Date.now() - start}ms`);
                 return;
             }
 
@@ -175,19 +197,81 @@ export default class FilePushHandler implements DragEventListener {
         }
         func(value);
     };
+    private async pushFiles(files: File[]): Promise<void> {
+        const uploaded: UploadedFile[] = [];
+        let hasUploadError = false;
+        for (const file of files) {
+            const result = await this.pushFile(file);
+            if (result) {
+                uploaded.push(result);
+            } else {
+                hasUploadError = true;
+            }
+        }
+        const uploadedApks = uploaded.filter(({ isApk }) => isApk);
+        const uploadedFiles = uploaded.filter(({ isApk }) => !isApk);
+        if (!this.onUploadComplete || !uploaded.length) {
+            return;
+        }
+        if (hasUploadError) {
+            uploadedApks.forEach(({ pushId, fileName }) => {
+                this.sendUpdate({
+                    pushId,
+                    fileName,
+                    message: 'Installation skipped because another APK failed to upload',
+                    progress: -1,
+                    error: true,
+                    finished: true,
+                });
+            });
+            if (!uploadedFiles.length) {
+                return;
+            }
+        }
+        const filesToFinalize = hasUploadError ? uploadedFiles : uploaded;
+        filesToFinalize.forEach(({ pushId, fileName, isApk }) => {
+            this.sendUpdate({
+                pushId,
+                fileName,
+                message: isApk ? 'saving to Download/ and installing...' : 'moving to Download/...',
+                progress: 100,
+                error: false,
+                finished: false,
+            });
+        });
+        try {
+            await this.onUploadComplete(filesToFinalize.map(({ fileName }) => fileName));
+            filesToFinalize.forEach(({ pushId, fileName, isApk }) => {
+                this.sendUpdate({
+                    pushId,
+                    fileName,
+                    message: isApk ? 'saved to Download/ and installed!' : 'saved to Download/',
+                    progress: 100,
+                    error: false,
+                    finished: true,
+                });
+            });
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : 'File processing failed';
+            filesToFinalize.forEach(({ pushId, fileName }) => {
+                this.sendUpdate({ pushId, fileName, message, progress: -1, error: true, finished: true });
+            });
+        }
+    }
+
     public onFilesDrop(files: File[]): boolean {
         this.listeners.forEach((listener) => {
             listener.onDrop();
         });
+        const filesToPush: File[] = [];
         files.forEach((file: File) => {
-            const { type, name } = file;
             if (this.filePushStream.isAllowedFile(file)) {
-                this.pushFile(file);
+                filesToPush.push(file);
             } else {
                 const errorParams: PushUpdateParams = {
                     pushId: FilePushHandler.REQUEST_NEW_PUSH_ID,
-                    fileName: name,
-                    message: `Unsupported type "${type}"`,
+                    fileName: file.name,
+                    message: 'Unsupported file',
                     progress: -1,
                     error: true,
                     finished: true,
@@ -195,6 +279,9 @@ export default class FilePushHandler implements DragEventListener {
                 this.sendUpdate(errorParams);
             }
         });
+        if (filesToPush.length) {
+            void this.pushFiles(filesToPush);
+        }
         return true;
     }
 

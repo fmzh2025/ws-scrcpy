@@ -338,7 +338,9 @@ export class StreamClientScrcpy
         this.applyNewVideoSettings(videoSettings, false);
         const element = player.getTouchableElement();
         const logger = new DragAndPushLogger(element);
-        this.filePushHandler = new FilePushHandler(element, new ScrcpyFilePushStream(this.streamReceiver));
+        this.filePushHandler = new FilePushHandler(element, new ScrcpyFilePushStream(this.streamReceiver), (fileNames) =>
+            this.finalizeUploadedFiles(udid, fileNames),
+        );
         this.filePushHandler.addEventListener(logger);
 
         const streamReceiver = this.streamReceiver;
@@ -352,6 +354,22 @@ export class StreamClientScrcpy
 
     public sendMessage(message: ControlMessage): void {
         this.streamReceiver.sendEvent(message);
+    }
+
+    private async finalizeUploadedFiles(udid: string, fileNames: string[]): Promise<void> {
+        const basePath = window.location.pathname.endsWith('/')
+            ? window.location.pathname
+            : `${window.location.pathname}/`;
+        const endpoint = new URL(`${basePath}api/finalize-upload`, window.location.origin);
+        const response = await fetch(endpoint.toString(), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ udid, fileNames }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.success) {
+            throw new Error(result.output || `File processing failed (${response.status})`);
+        }
     }
 
     public getDeviceName(): string {
