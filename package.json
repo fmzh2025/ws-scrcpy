@@ -12,7 +12,9 @@
     "postinstall": "node scripts/setup-appium.js",
     "lint": "eslint src/ --ext .ts",
     "format": "eslint src/ --fix --ext .ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "npm run test:video-queue && npm run test:websocket-proxy-metrics",
+    "test:video-queue": "node scripts/test-bounded-frame-queue.js",
+    "test:websocket-proxy-metrics": "node scripts/test-websocket-proxy-metrics.js"
   },
   "author": "Sergey Volkov <drauggres@gmail.com>",
   "license": "MIT",

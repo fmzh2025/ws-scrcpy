@@ -3,6 +3,8 @@ import { AdbUtils } from '../AdbUtils';
 import WS from 'ws';
 import { RequestParameters } from '../../mw/Mw';
 import { ACTION } from '../../../common/Action';
+import { ControlCenter } from '../services/ControlCenter';
+import { Device } from '../Device';
 
 export class WebsocketProxyOverAdb extends WebsocketProxy {
     public static processRequest(ws: WS, params: RequestParameters): WebsocketProxy | undefined {
@@ -47,9 +49,25 @@ export class WebsocketProxyOverAdb extends WebsocketProxy {
     }
 
     public static createProxyOverAdb(ws: WS, udid: string, remote: string, path?: string | null): WebsocketProxy {
-        const service = new WebsocketProxy(ws);
-        AdbUtils.forward(udid, remote)
+        const device = ControlCenter.getInstance().getDevice(udid);
+        if (!device) {
+            ws.close(4004, `[${this.TAG}] Device "${udid}" was not found`);
+            return new WebsocketProxy(ws);
+        }
+        const service = new WebsocketProxyOverAdb(ws, device);
+        const acquirePromise = device.acquireStreamServer();
+        acquirePromise
+            .then(() => {
+                if (service.isReleased) {
+                    device.releaseStreamServer();
+                    return;
+                }
+                return AdbUtils.forward(udid, remote);
+            })
             .then((port) => {
+                if (typeof port !== 'number') {
+                    return;
+                }
                 return service.init(`ws://127.0.0.1:${port}${path ? path : ''}`);
             })
             .catch((e) => {
@@ -58,5 +76,19 @@ export class WebsocketProxyOverAdb extends WebsocketProxy {
                 ws.close(4005, msg);
             });
         return service;
+    }
+
+    private streamReleased = false;
+
+    constructor(ws: WS, private readonly device: Device) {
+        super(ws);
+    }
+
+    public release(): void {
+        super.release();
+        if (!this.streamReleased) {
+            this.streamReleased = true;
+            this.device.releaseStreamServer();
+        }
     }
 }

@@ -72,19 +72,15 @@ export class ScrcpyServer {
         const serverPid: number[] = [];
         const promises = list.map((pid) => {
             return device.runShellCommandAdbKit(`cat /proc/${pid}/cmdline`).then((output) => {
-                const args = output.split('\0');
-                if (!args.length || args[0] !== SERVER_PROCESS_NAME) {
+                const args = output
+                    .split('\0')
+                    .map((arg) => arg.trim())
+                    .filter((arg) => !!arg);
+                const packageIndex = args.indexOf(SERVER_PACKAGE);
+                if (packageIndex === -1 || packageIndex + 1 >= args.length) {
                     return;
                 }
-                let first = args[0];
-                while (args.length && first !== SERVER_PACKAGE) {
-                    args.shift();
-                    first = args[0];
-                }
-                if (args.length < 3) {
-                    return;
-                }
-                const versionString = args[1];
+                const versionString = args[packageIndex + 1];
                 if (versionString === SERVER_VERSION) {
                     serverPid.push(pid);
                 } else {
@@ -97,7 +93,7 @@ export class ScrcpyServer {
                                 `Found old server version running (PID: ${pid}, Version: ${versionString})`,
                             );
                             console.log(device.TAG, 'Perform kill now');
-                            device.killProcess(pid);
+                            return device.killProcess(pid);
                         }
                     }
                 }
@@ -136,6 +132,8 @@ export class ScrcpyServer {
         if (Array.isArray(list) && list.length) {
             return list;
         }
-        return;
+        // A second start can lose the bind race while the first server is still alive.
+        // Re-check the process list so the caller reuses that server instead of retrying.
+        return this.getServerPid(device);
     }
 }

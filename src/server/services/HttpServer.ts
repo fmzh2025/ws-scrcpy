@@ -10,6 +10,7 @@ import * as process from 'process';
 import { EnvName } from '../EnvName';
 import { ControlCenter } from '../goog-device/services/ControlCenter';
 import { AdbRemoteAccess } from '../goog-device/services/AdbRemoteAccess';
+import { WebsocketProxy } from '../mw/WebsocketProxy';
 
 const DEFAULT_STATIC_DIR = path.join(__dirname, './public');
 
@@ -21,6 +22,7 @@ const API_PREFIX = `${PATHNAME === '/' ? '' : PATHNAME.replace(/\/$/, '')}/api`;
 const ADB_STATUS_PATH = `${API_PREFIX}/adb/status`;
 const ADB_TOGGLE_PATH = `${API_PREFIX}/adb/toggle`;
 const ADB_COMMAND_PATH = `${API_PREFIX}/adb/command`;
+const STREAM_METRICS_PATH = `${API_PREFIX}/stream/metrics`;
 
 const ADB_OPERATIONS = new Set([
     'devices',
@@ -184,6 +186,13 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
                 const output = error instanceof Error ? error.message : 'Unable to read ADB status';
                 return res.status(400).json({ success: false, output });
             }
+        });
+        this.mainApp.get(STREAM_METRICS_PATH, (_req, res) => {
+            return res.json({
+                success: true,
+                generatedAt: Date.now(),
+                streams: WebsocketProxy.getMetrics(),
+            });
         });
         this.mainApp.post(ADB_TOGGLE_PATH, async (req, res) => {
             const { udid, enabled } = req.body || {};

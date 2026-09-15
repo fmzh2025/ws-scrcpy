@@ -33,7 +33,12 @@ export class Device extends TypedEmitter<DeviceEvents> {
     private pidDetectionVariant: PID_DETECTION = PID_DETECTION.UNKNOWN;
     private client: AdbKitClient;
     private properties?: Record<string, string>;
-    private spawnServer = true;
+    private spawnServer = false;
+    private startServerPromise?: Promise<number | undefined>;
+    private streamAcquirePromise?: Promise<void>;
+    private streamIdleTimeoutId?: Timeout;
+    private streamClientCount = 0;
+    private streamServerOwned = false;
     private updateTimeoutId?: Timeout;
     private updateTimeout = Device.INITIAL_UPDATE_TIMEOUT;
     private updateCount = 0;
@@ -540,6 +545,11 @@ export class Device extends TypedEmitter<DeviceEvents> {
 
     public async killServer(pid: number): Promise<void> {
         this.spawnServer = false;
+        this.streamServerOwned = false;
+        if (this.streamIdleTimeoutId) {
+            clearTimeout(this.streamIdleTimeoutId);
+            this.streamIdleTimeoutId = undefined;
+        }
         const realPid = await this.getServerPid();
         if (typeof realPid !== 'number') {
             return;
@@ -560,8 +570,74 @@ export class Device extends TypedEmitter<DeviceEvents> {
         }
     }
 
-    public async startServer(): Promise<number | undefined> {
+    public startServer(): Promise<number | undefined> {
         this.spawnServer = true;
+        if (!this.startServerPromise) {
+            this.startServerPromise = this.startServerInternal().finally(() => {
+                this.startServerPromise = undefined;
+            });
+        }
+        return this.startServerPromise;
+    }
+
+    public acquireStreamServer(): Promise<void> {
+        if (!this.connected) {
+            return Promise.reject(new Error(`Device "${this.udid}" is not connected`));
+        }
+        if (this.streamIdleTimeoutId) {
+            clearTimeout(this.streamIdleTimeoutId);
+            this.streamIdleTimeoutId = undefined;
+        }
+        if (!this.streamAcquirePromise) {
+            this.streamAcquirePromise = this.ensureStreamServer().finally(() => {
+                this.streamAcquirePromise = undefined;
+            });
+        }
+        return this.streamAcquirePromise.then(() => {
+            this.streamClientCount++;
+        });
+    }
+
+    public releaseStreamServer(): void {
+        if (this.streamClientCount === 0) {
+            return;
+        }
+        this.streamClientCount--;
+        if (this.streamClientCount || !this.streamServerOwned || this.streamIdleTimeoutId) {
+            return;
+        }
+        this.streamIdleTimeoutId = setTimeout(() => {
+            this.streamIdleTimeoutId = undefined;
+            this.stopOwnedStreamServer().catch((error: Error) => {
+                console.error(this.TAG, `Failed to stop idle stream server: ${error.message}`);
+            });
+        }, 5000);
+    }
+
+    private async ensureStreamServer(): Promise<void> {
+        const existingPid = await this.getServerPid();
+        if (typeof existingPid === 'number') {
+            this.streamServerOwned = false;
+            return;
+        }
+        await this.startServer();
+        this.streamServerOwned = true;
+    }
+
+    private async stopOwnedStreamServer(): Promise<void> {
+        if (this.streamClientCount || !this.streamServerOwned) {
+            return;
+        }
+        const pid = await this.getServerPid();
+        if (typeof pid === 'number') {
+            await this.killServer(pid);
+        } else {
+            this.spawnServer = false;
+            this.streamServerOwned = false;
+        }
+    }
+
+    private async startServerInternal(): Promise<number | undefined> {
         const pid = await this.getServerPid();
         if (typeof pid === 'number') {
             return pid;
