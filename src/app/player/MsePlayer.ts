@@ -3,6 +3,7 @@ import VideoConverter, { setLogger, mimeType } from 'h264-converter';
 import VideoSettings from '../VideoSettings';
 import Size from '../Size';
 import { DisplayInfo } from '../DisplayInfo';
+import { BoundedFrameQueue } from './BoundedFrameQueue';
 
 interface QualityStats {
     timestamp: number;
@@ -16,15 +17,15 @@ type Block = {
 };
 
 export class MsePlayer extends BasePlayer {
-    public static readonly storageKeyPrefix = 'MseDecoder';
+    public static readonly storageKeyPrefix = 'MseDecoderLowLatencyV2';
     public static readonly playerFullName = 'H264 Converter';
     public static readonly playerCodeName = 'mse';
     public static readonly preferredVideoSettings: VideoSettings = new VideoSettings({
         lockedVideoOrientation: -1,
-        bitrate: 7340032,
-        maxFps: 30,
-        iFrameInterval: 1,
-        bounds: new Size(720, 720),
+        bitrate: 524288,
+        maxFps: 10,
+        iFrameInterval: 5,
+        bounds: new Size(480, 800),
         sendFrameMeta: false,
     });
     private static DEFAULT_FRAMES_PER_FRAGMENT = 1;
@@ -54,18 +55,32 @@ export class MsePlayer extends BasePlayer {
     private sourceBuffer?: SourceBuffer;
     private waitUntilSegmentRemoved = false;
     private blocks: Block[] = [];
-    private frames: Uint8Array[] = [];
+    private readonly frames = new BoundedFrameQueue(
+        12,
+        4 * 1024 * 1024,
+        (frame) => BasePlayer.isIFrame(frame),
+        (frame) => BasePlayer.getParameterSetType(frame),
+    );
     private jumpEnd = -1;
     private lastTime = -1;
     protected canPlay = false;
     private seekingSince = -1;
+    private onSeekEnd = (): void => {
+        this.seekingSince = -1;
+        this.tag.removeEventListener('seeked', this.onSeekEnd);
+        this.tag.play();
+    };
+    private badStateTimer?: ReturnType<typeof setInterval>;
+    private pumpTimer?: ReturnType<typeof setTimeout>;
+    private sourceBufferOwner?: SourceBuffer;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     protected readonly isSafari = !!(window as unknown as any)['safari'];
     protected readonly isChrome = navigator.userAgent.includes('Chrome');
     protected readonly isMac = navigator.platform.startsWith('Mac');
-    private MAX_TIME_TO_RECOVER = 200; // ms
-    private MAX_BUFFER = this.isSafari ? 2 : this.isChrome && this.isMac ? 0.25 : 0.2;
-    private MAX_AHEAD = -0.2;
+    private readonly MAX_TIME_TO_RECOVER = 200; // ms
+    private readonly MAX_SEEK_WAIT = 500; // ms
+    private readonly MAX_BUFFER = this.isSafari ? 2 : this.isChrome && this.isMac ? 0.25 : 0.2;
+    private readonly MAX_AHEAD = -0.2;
 
     public static isSupported(): boolean {
         return typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(mimeType);
@@ -206,15 +221,20 @@ export class MsePlayer extends BasePlayer {
             this.resetStats();
         }
         this.converter.play();
+        if (!this.badStateTimer) {
+            this.badStateTimer = setInterval(() => this.checkForBadState(), 100);
+        }
     }
 
     public pause(): void {
         super.pause();
+        this.stopBadStateWatchdog();
         this.stopConverter();
     }
 
     public stop(): void {
         super.stop();
+        this.stopBadStateWatchdog();
         this.stopConverter();
     }
 
@@ -263,17 +283,52 @@ export class MsePlayer extends BasePlayer {
             const removeEnd = this.blocks[4].end;
             this.blocks = this.blocks.slice(5);
             this.sourceBuffer.remove(removeStart, removeEnd);
-            let frame = this.frames.shift();
-            while (frame) {
-                if (!this.checkForIFrame(frame)) {
-                    this.frames.unshift(frame);
-                    break;
-                }
-                frame = this.frames.shift();
-            }
         } catch (error: any) {
             console.error(`[${this.name}]`, 'Failed to clean source buffer');
         }
+    };
+
+    private schedulePump(): void {
+        if (this.pumpTimer || !this.frames.length) {
+            return;
+        }
+        this.pumpTimer = setTimeout(() => {
+            this.pumpTimer = undefined;
+            this.pumpFrames();
+        }, 16);
+    }
+
+    private pumpFrames = (): void => {
+        if (!this.converter) {
+            return;
+        }
+        this.sourceBuffer = this.converter.sourceBuffer;
+        if (!this.sourceBuffer) {
+            this.schedulePump();
+            return;
+        }
+        if (this.sourceBufferOwner !== this.sourceBuffer) {
+            this.sourceBufferOwner?.removeEventListener('updateend', this.pumpFrames);
+            this.sourceBufferOwner = this.sourceBuffer;
+            this.sourceBuffer.addEventListener('updateend', this.pumpFrames);
+        }
+        if (this.sourceBuffer.updating || this.waitUntilSegmentRemoved) {
+            return;
+        }
+
+        let processed = 0;
+        while (processed < 32 && !this.sourceBuffer.updating && !this.waitUntilSegmentRemoved) {
+            const frame = this.frames.shift();
+            if (!frame) {
+                return;
+            }
+            if (!this.checkForIFrame(frame)) {
+                this.frames.unshift(frame);
+                return;
+            }
+            processed++;
+        }
+        this.schedulePump();
     };
 
     jumpToEnd = (): void => {
@@ -295,9 +350,16 @@ export class MsePlayer extends BasePlayer {
 
     public pushFrame(frame: Uint8Array): void {
         super.pushFrame(frame);
-        if (!this.checkForIFrame(frame)) {
-            this.frames.push(frame);
+
+        const result = this.frames.push(frame);
+        if (result.dropped) {
+            this.videoStats.push({
+                decodedFrames: 0,
+                droppedFrames: result.dropped,
+                timestamp: Date.now(),
+            });
         }
+        this.pumpFrames();
         this.checkForBadState();
     }
 
@@ -329,10 +391,13 @@ export class MsePlayer extends BasePlayer {
         }
         this.lastTime = currentTime;
         if (this.tag.buffered.length) {
-            const end = this.tag.buffered.end(0);
+            const lastBufferedRange = this.tag.buffered.length - 1;
+            const end = this.tag.buffered.end(lastBufferedRange);
+            const hasBufferedGap =
+                lastBufferedRange > 0 && this.tag.buffered.start(lastBufferedRange) - currentTime > 0.05;
             const buffered = end - currentTime;
 
-            if (end - currentTime > this.MAX_BUFFER) {
+            if (buffered > this.MAX_BUFFER || hasBufferedGap) {
                 if (this.bigBufferSince === -1) {
                     this.bigBufferSince = now;
                 } else {
@@ -373,23 +438,27 @@ export class MsePlayer extends BasePlayer {
             let waitingForSeekEnd = 0;
             if (this.seekingSince !== -1) {
                 waitingForSeekEnd = now - this.seekingSince;
-                if (waitingForSeekEnd < 1500) {
+                if (waitingForSeekEnd < this.MAX_SEEK_WAIT) {
                     return;
                 }
+                this.tag.removeEventListener('seeked', this.onSeekEnd);
+                this.seekingSince = -1;
             }
             // console.info(`${reasonToJump} Jumping to the end. ${waitingForSeekEnd}`);
 
-            const onSeekEnd = () => {
-                this.seekingSince = -1;
-                this.tag.removeEventListener('seeked', onSeekEnd);
-                this.tag.play();
-            };
-            if (this.seekingSince !== -1) {
-                console.warn(`[${this.name}]`, `Attempt to seek while already seeking! ${waitingForSeekEnd}`);
+            if (Math.abs(end - currentTime) <= 0.05) {
+                return;
             }
             this.seekingSince = now;
-            this.tag.addEventListener('seeked', onSeekEnd);
-            this.tag.currentTime = this.tag.buffered.end(0);
+            this.tag.addEventListener('seeked', this.onSeekEnd);
+            this.tag.currentTime = end;
+        }
+    }
+
+    private stopBadStateWatchdog(): void {
+        if (this.badStateTimer) {
+            clearInterval(this.badStateTimer);
+            this.badStateTimer = undefined;
         }
     }
 
@@ -398,6 +467,9 @@ export class MsePlayer extends BasePlayer {
             return false;
         }
         this.sourceBuffer = this.converter.sourceBuffer;
+        if (!this.sourceBuffer) {
+            return false;
+        }
         if (BasePlayer.isIFrame(frame)) {
             let start = 0;
             let end = 0;
@@ -413,10 +485,8 @@ export class MsePlayer extends BasePlayer {
                 this.blocks.push(block);
                 if (this.blocks.length > 10) {
                     this.waitUntilSegmentRemoved = true;
-
-                    this.sourceBuffer.addEventListener('updateend', this.cleanSourceBuffer);
-                    this.converter.appendRawData(frame);
-                    return true;
+                    this.cleanSourceBuffer();
+                    return false;
                 }
             }
             if (this.sourceBuffer) {
@@ -432,11 +502,24 @@ export class MsePlayer extends BasePlayer {
     }
 
     private stopConverter(): void {
+        this.tag.removeEventListener('seeked', this.onSeekEnd);
+        this.seekingSince = -1;
+        if (this.pumpTimer) {
+            clearTimeout(this.pumpTimer);
+            this.pumpTimer = undefined;
+        }
         if (this.converter) {
             this.converter.appendRawData(new Uint8Array([]));
             this.converter.pause();
+            this.sourceBufferOwner?.removeEventListener('updateend', this.pumpFrames);
+            this.sourceBufferOwner?.removeEventListener('updateend', this.cleanSourceBuffer);
             delete this.converter;
         }
+        this.sourceBuffer = undefined;
+        this.sourceBufferOwner = undefined;
+        this.frames.clear();
+        this.blocks = [];
+        this.waitUntilSegmentRemoved = false;
     }
 
     public getFitToScreenStatus(): boolean {

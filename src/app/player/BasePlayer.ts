@@ -160,13 +160,38 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
     }
 
     protected static isIFrame(frame: Uint8Array): boolean {
-        // last 5 bits === 5: Coded slice of an IDR picture
+        return this.hasNalType(frame, 5);
+    }
 
-        // https://www.ietf.org/rfc/rfc3984.txt
-        // 1.3.  Network Abstraction Layer Unit Types
-        // https://www.itu.int/rec/T-REC-H.264-201906-I/en
-        // Table 7-1 – NAL unit type codes, syntax element categories, and NAL unit type classes
-        return frame && frame.length > 4 && (frame[4] & 31) === 5;
+    protected static getParameterSetType(frame: Uint8Array): number | undefined {
+        if (this.hasNalType(frame, 7)) {
+            return 7;
+        }
+        if (this.hasNalType(frame, 8)) {
+            return 8;
+        }
+        return;
+    }
+
+    private static hasNalType(frame: Uint8Array, wantedType: number): boolean {
+        for (let index = 0; index + 3 < frame.length; index++) {
+            let headerIndex = -1;
+            if (frame[index] === 0 && frame[index + 1] === 0 && frame[index + 2] === 1) {
+                headerIndex = index + 3;
+            } else if (
+                index + 4 < frame.length &&
+                frame[index] === 0 &&
+                frame[index + 1] === 0 &&
+                frame[index + 2] === 0 &&
+                frame[index + 3] === 1
+            ) {
+                headerIndex = index + 4;
+            }
+            if (headerIndex >= 0 && headerIndex < frame.length && (frame[headerIndex] & 31) === wantedType) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static getStorageKey(storageKeyPrefix: string, udid: string): string {

@@ -18,7 +18,7 @@ function toHex(value: number) {
 }
 
 export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
-    public static readonly storageKeyPrefix = 'WebCodecsPlayer';
+    public static readonly storageKeyPrefix = 'WebCodecsPlayerLowLatencyV2';
     public static readonly playerFullName = 'WebCodecs';
     public static readonly playerCodeName = 'webcodecs';
 
@@ -70,10 +70,12 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     public readonly supportsScreenshot = true;
     private context: CanvasRenderingContext2D;
     private decoder: VideoDecoder;
+    private decoderConfig?: VideoDecoderConfig;
     private buffer: ArrayBuffer | undefined;
     private hadIDR = false;
     private bufferedSPS = false;
     private bufferedPPS = false;
+    private readonly MAX_DECODER_QUEUE_SIZE = 2;
 
     constructor(udid: string, displayInfo?: DisplayInfo, name = WebCodecsPlayer.playerFullName) {
         super(udid, displayInfo, name, WebCodecsPlayer.storageKeyPrefix);
@@ -146,6 +148,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
                 codec,
                 optimizeForLatency: true,
             } as VideoDecoderConfig;
+            this.decoderConfig = config;
             this.decoder.configure(config);
             this.bufferedSPS = true;
             this.addToBuffer(data);
@@ -164,6 +167,10 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         const array = this.addToBuffer(data);
         this.hadIDR = this.hadIDR || isIDR;
         if (array && this.decoder.state === 'configured' && this.hadIDR) {
+            if (this.decoder.decodeQueueSize > this.MAX_DECODER_QUEUE_SIZE) {
+                this.resetDecoderForLatency();
+                return;
+            }
             this.buffer = undefined;
             this.bufferedPPS = false;
             this.bufferedSPS = false;
@@ -176,6 +183,20 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
             );
             return;
         }
+    }
+
+    private resetDecoderForLatency(): void {
+        if (!this.decoderConfig || this.decoder.state === 'closed') {
+            return;
+        }
+        this.decoder.reset();
+        this.decoder.configure(this.decoderConfig);
+        this.buffer = undefined;
+        this.hadIDR = false;
+        // The decoder is configured from the latest SPS, so the next IDR can
+        // be decoded without waiting for another SPS/PPS pair.
+        this.bufferedSPS = true;
+        this.bufferedPPS = true;
     }
 
     protected drawDecoded = (): void => {

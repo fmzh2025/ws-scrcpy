@@ -2,6 +2,7 @@ import { BasePlayer, PlaybackQuality } from './BasePlayer';
 import ScreenInfo from '../ScreenInfo';
 import VideoSettings from '../VideoSettings';
 import { DisplayInfo } from '../DisplayInfo';
+import { BoundedFrameQueue } from './BoundedFrameQueue';
 
 type DecodedFrame = {
     width: number;
@@ -14,7 +15,12 @@ interface CanvasDecoder {
 }
 
 export abstract class BaseCanvasBasedPlayer extends BasePlayer {
-    protected framesList: Uint8Array[] = [];
+    private readonly framesList = new BoundedFrameQueue(
+        12,
+        4 * 1024 * 1024,
+        (frame) => BasePlayer.isIFrame(frame),
+        (frame) => BasePlayer.getParameterSetType(frame),
+    );
     protected decodedFrames: DecodedFrame[] = [];
     protected videoStats: PlaybackQuality[] = [];
     protected animationFrameId?: number;
@@ -201,7 +207,7 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
         this.clearState();
         const { width, height } = screenInfo.videoSize;
         this.initCanvas(width, height);
-        this.framesList = [];
+        this.framesList.clear();
         if (this.animationFrameId) {
             cancelAnimationFrame(this.animationFrameId);
             this.animationFrameId = undefined;
@@ -210,27 +216,20 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
 
     public pushFrame(frame: Uint8Array): void {
         super.pushFrame(frame);
-        if (BasePlayer.isIFrame(frame)) {
-            if (this.videoSettings) {
-                const { maxFps } = this.videoSettings;
-                if (this.framesList.length > maxFps / 2) {
-                    const dropped = this.framesList.length;
-                    this.framesList = [];
-                    this.videoStats.push({
-                        decodedFrames: 0,
-                        droppedFrames: dropped,
-                        inputBytes: 0,
-                        inputFrames: 0,
-                        timestamp: Date.now(),
-                    });
-                }
-            }
+        const result = this.framesList.push(frame);
+        if (result.dropped) {
+            this.videoStats.push({
+                decodedFrames: 0,
+                droppedFrames: result.dropped,
+                inputBytes: 0,
+                inputFrames: 0,
+                timestamp: Date.now(),
+            });
         }
-        this.framesList.push(frame);
         this.shiftFrame();
     }
 
     protected clearState(): void {
-        this.framesList = [];
+        this.framesList.clear();
     }
 }
