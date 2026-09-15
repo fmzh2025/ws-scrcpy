@@ -32,6 +32,7 @@ import { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
 import { ScrcpyFilePushStream } from '../filePush/ScrcpyFilePushStream';
 import { InlineKeyboardOverlay } from '../InlineKeyboardOverlay';
 import { AdbOverlay } from './AdbOverlay';
+import { DeviceState } from '../../../common/DeviceState';
 
 type StartParams = {
     udid: string;
@@ -592,8 +593,7 @@ export class StreamClientScrcpy
         fullName: string,
         params: ParamsDeviceTracker,
     ): HTMLElement | DocumentFragment | undefined {
-        const hasPid = descriptor.pid !== -1;
-        if (hasPid) {
+        if (descriptor.state === DeviceState.DEVICE) {
             const configureButtonId = `configure_${Util.escapeUdid(descriptor.udid)}`;
             const e = html`<div class="stream ${blockClass}">
                 <button

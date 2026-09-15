@@ -332,7 +332,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         }
 
         tbody.appendChild(row);
-        if (DeviceTracker.CREATE_DIRECT_LINKS && hasPid && selectedInterfaceUrl) {
+        if (DeviceTracker.CREATE_DIRECT_LINKS && isActive && selectedInterfaceUrl) {
             this.updateLink({
                 url: selectedInterfaceUrl,
                 name: selectedInterfaceName,
