@@ -469,6 +469,13 @@ body.remote-keyboard {
     color: var(--text-color);
 }
 
+.stream-network-mode-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: .35rem;
+    margin-top: .15rem;
+}
+
 .stream-network-requirement-description,
 .stream-network-advanced > p {
     margin: 0;

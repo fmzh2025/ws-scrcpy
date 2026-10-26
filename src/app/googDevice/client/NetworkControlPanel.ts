@@ -1,6 +1,7 @@
 import { NetworkRouteStatus } from '../../../types/NetworkRouteStatus';
 import {
     deviceVpnActionLabel,
+    hostDirectActionLabel,
     hostVpnActionLabel,
     hostVpnTrackingMessage,
     networkStatusFailure,
@@ -12,7 +13,13 @@ import {
     statusVerification,
 } from './NetworkStatusPresentation';
 
-type NetworkAction = 'apply-host-vpn' | 'lock-device-vpn' | 'clear-android-proxy' | 'lock-current' | 'unlock';
+type NetworkAction =
+    | 'apply-host-vpn'
+    | 'apply-host-direct'
+    | 'lock-device-vpn'
+    | 'clear-android-proxy'
+    | 'lock-current'
+    | 'unlock';
 
 type NetworkStatusResponse = {
     status?: NetworkRouteStatus;
@@ -27,6 +34,7 @@ export class NetworkControlPanel {
     private readonly details: HTMLElement;
     private readonly diagnostics: HTMLElement;
     private readonly hostVpnButton: HTMLButtonElement;
+    private readonly hostDirectButton: HTMLButtonElement;
     private readonly deviceVpnButton: HTMLButtonElement;
     private readonly hostVpnTracking: HTMLElement;
     private readonly actionButtons: HTMLButtonElement[];
@@ -76,6 +84,12 @@ export class NetworkControlPanel {
         this.hostVpnButton = this.createButton('使用宿主 VPN（验证并锁定）', () => this.runAction('apply-host-vpn'));
         this.hostVpnButton.classList.add('primary');
         this.hostVpnButton.title = '停止第三方应用，验证云手机实际出口与宿主 VPN 一致，然后锁定该出口';
+        this.hostDirectButton = this.createButton('不用宿主 VPN（验证并锁定）', () =>
+            this.runAction('apply-host-direct'),
+        );
+        this.hostDirectButton.classList.add('primary');
+        this.hostDirectButton.title =
+            '保持宿主 VPN 开启，但强制云手机经宿主物理网卡直连；验证真实 IP 后锁定并阻断旁路泄漏';
         this.deviceVpnButton = this.createButton('使用手机 VPN（验证并锁定）', () => this.runAction('lock-device-vpn'));
         this.deviceVpnButton.classList.add('primary');
         this.deviceVpnButton.title = '请先在云手机内启动全局 VPN，再验证并锁定手机 VPN 的实际出口';
@@ -85,16 +99,26 @@ export class NetworkControlPanel {
         clearButton.title = '只清除 Android HTTP 代理；不会关闭宿主 VPN，也不保证变成国内 IP';
         const unlockButton = this.createButton('关闭 IP 防漂移保护', () => this.runAction('unlock'));
         unlockButton.title = '关闭 IP 变化时的自动停应用和网络拦截';
-        this.actionButtons = [this.hostVpnButton, this.deviceVpnButton, lockButton, clearButton, unlockButton];
+        this.actionButtons = [
+            this.hostVpnButton,
+            this.hostDirectButton,
+            this.deviceVpnButton,
+            lockButton,
+            clearButton,
+            unlockButton,
+        ];
         this.setActionsDisabled(true);
 
         const requirements = document.createElement('div');
         requirements.className = 'stream-network-requirements';
+        const hostModeActions = document.createElement('div');
+        hostModeActions.className = 'stream-network-mode-actions';
+        hostModeActions.append(this.hostVpnButton, this.hostDirectButton);
         requirements.append(
             this.createRequirement(
-                '① 使用宿主 VPN',
-                '验证云手机实测 IP 与宿主 VPN 出口一致；成功后锁定 IP，防止业务 App 在线时发生漂移。',
-                this.hostVpnButton,
+                '① 选择宿主网络路径',
+                '二选一：使用宿主 VPN，或绕过宿主 VPN 使用物理网络；均以云手机内部实测 IP 为准。',
+                hostModeActions,
             ),
             this.createRequirement(
                 '② 使用手机 VPN',
@@ -204,11 +228,7 @@ export class NetworkControlPanel {
         return button;
     }
 
-    private createRequirement(
-        title: string,
-        description: string | HTMLElement,
-        button?: HTMLButtonElement,
-    ): HTMLElement {
+    private createRequirement(title: string, description: string | HTMLElement, action?: HTMLElement): HTMLElement {
         const requirement = document.createElement('section');
         requirement.className = 'stream-network-requirement';
         const heading = document.createElement('strong');
@@ -223,8 +243,8 @@ export class NetworkControlPanel {
         } else {
             requirement.appendChild(description);
         }
-        if (button) {
-            requirement.appendChild(button);
+        if (action) {
+            requirement.appendChild(action);
         }
         return requirement;
     }
@@ -265,6 +285,7 @@ export class NetworkControlPanel {
         );
         this.trigger.setAttribute('aria-label', statusSummary(status));
         this.hostVpnButton.textContent = hostVpnActionLabel(status);
+        this.hostDirectButton.textContent = hostDirectActionLabel(status);
         this.deviceVpnButton.textContent = deviceVpnActionLabel(status);
         this.hostVpnTracking.textContent = hostVpnTrackingMessage(status);
         this.hostVpnTracking.setAttribute(

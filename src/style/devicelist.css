@@ -210,6 +210,13 @@ body.list #device_list_menu {
     color: var(--text-color);
 }
 
+#devices .network-mode-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: .35em;
+    margin-top: auto;
+}
+
 #devices .network-requirement-description,
 #devices .network-advanced > p {
     margin: 0;

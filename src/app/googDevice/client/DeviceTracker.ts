@@ -19,6 +19,7 @@ import { Tool } from '../../client/Tool';
 import { NetworkRouteStatus } from '../../../types/NetworkRouteStatus';
 import {
     deviceVpnActionLabel,
+    hostDirectActionLabel,
     hostVpnActionLabel,
     hostVpnTrackingMessage,
     networkStatusFailure,
@@ -31,12 +32,19 @@ import {
 
 type Field = keyof GoogDeviceDescriptor | ((descriptor: GoogDeviceDescriptor) => string);
 type DescriptionColumn = { title: string; field: Field };
-type NetworkAction = 'apply-host-vpn' | 'lock-device-vpn' | 'clear-android-proxy' | 'lock-current' | 'unlock';
+type NetworkAction =
+    | 'apply-host-vpn'
+    | 'apply-host-direct'
+    | 'lock-device-vpn'
+    | 'clear-android-proxy'
+    | 'lock-current'
+    | 'unlock';
 
 type NetworkEntry = {
     status: HTMLElement;
     details: HTMLElement;
     hostVpnButton: HTMLButtonElement;
+    hostDirectButton: HTMLButtonElement;
     deviceVpnButton: HTMLButtonElement;
     hostVpnTracking: HTMLElement;
     buttons: HTMLButtonElement[];
@@ -410,6 +418,11 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         );
         hostVpnButton.classList.add('primary');
         hostVpnButton.title = '停止第三方应用，验证云手机实际出口与宿主 VPN 一致，然后锁定该出口';
+        const hostDirectButton = this.createNetworkButton('不用宿主 VPN（验证并锁定）', () =>
+            this.runNetworkAction(udid, 'apply-host-direct'),
+        );
+        hostDirectButton.classList.add('primary');
+        hostDirectButton.title = '保持宿主 VPN 开启，但强制云手机经宿主物理网卡直连；验证真实 IP 后锁定并阻断旁路泄漏';
         const deviceVpnButton = this.createNetworkButton('使用手机 VPN（验证并锁定）', () =>
             this.runNetworkAction(udid, 'lock-device-vpn'),
         );
@@ -427,16 +440,19 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             this.runNetworkAction(udid, 'unlock'),
         );
         unlockButton.title = '关闭 IP 变化时的自动停应用和网络拦截';
-        const actionButtons = [hostVpnButton, deviceVpnButton, lockButton, clearButton, unlockButton];
+        const actionButtons = [hostVpnButton, hostDirectButton, deviceVpnButton, lockButton, clearButton, unlockButton];
         actionButtons.forEach((button) => (button.disabled = true));
 
         const requirements = document.createElement('div');
         requirements.className = 'network-requirements';
+        const hostModeActions = document.createElement('div');
+        hostModeActions.className = 'network-mode-actions';
+        hostModeActions.append(hostVpnButton, hostDirectButton);
         requirements.append(
             this.createNetworkRequirement(
-                '① 使用宿主 VPN',
-                '验证云手机实测 IP 与宿主 VPN 出口一致，成功后锁定并防止 IP 漂移。',
-                hostVpnButton,
+                '① 选择宿主网络路径',
+                '二选一：使用宿主 VPN，或绕过宿主 VPN 使用物理网络；均以云手机内部实测 IP 为准。',
+                hostModeActions,
             ),
             this.createNetworkRequirement(
                 '② 使用手机 VPN',
@@ -465,6 +481,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             status,
             details,
             hostVpnButton,
+            hostDirectButton,
             deviceVpnButton,
             hostVpnTracking,
             buttons: actionButtons,
@@ -507,7 +524,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
     private createNetworkRequirement(
         title: string,
         description: string | HTMLElement,
-        button?: HTMLButtonElement,
+        action?: HTMLElement,
     ): HTMLElement {
         const requirement = document.createElement('section');
         requirement.className = 'network-requirement';
@@ -523,8 +540,8 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         } else {
             requirement.appendChild(description);
         }
-        if (button) {
-            requirement.appendChild(button);
+        if (action) {
+            requirement.appendChild(action);
         }
         return requirement;
     }
@@ -559,6 +576,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         entry.details.textContent = statusVerification(status);
         entry.details.setAttribute('data-network-tone', statusTone(status));
         entry.hostVpnButton.textContent = hostVpnActionLabel(status);
+        entry.hostDirectButton.textContent = hostDirectActionLabel(status);
         entry.deviceVpnButton.textContent = deviceVpnActionLabel(status);
         entry.hostVpnTracking.textContent = hostVpnTrackingMessage(status);
         entry.hostVpnTracking.setAttribute(
