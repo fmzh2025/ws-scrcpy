@@ -2,6 +2,11 @@ import { NetworkRouteKind, NetworkRouteStatus } from '../../../types/NetworkRout
 
 export type NetworkStatusTone = 'safe' | 'warning' | 'danger';
 
+export type NetworkStatusFailure = {
+    headline: string;
+    details: string;
+};
+
 const ROUTE_LABELS: Record<NetworkRouteKind, string> = {
     'host-vpn': '宿主 VPN',
     'device-vpn': '手机 VPN',
@@ -38,6 +43,79 @@ export function statusTone(status: NetworkRouteStatus): NetworkStatusTone {
 
 export function statusHeadline(status: NetworkRouteStatus): string {
     return status.ip ? `实际出口 IP：${status.ip}` : '实际出口 IP：检测失败';
+}
+
+export function statusVerification(status: NetworkRouteStatus): string {
+    if (!status.ip) {
+        return '验证结果：未取得云手机内部实测出口 IP';
+    }
+    if (status.route === 'host-vpn') {
+        return status.confidence === 'verified'
+            ? '验证结果：云手机出口与宿主 VPN 出口一致'
+            : '验证结果：仅确认代理出口一致，尚未验证所有 App 都经过宿主 VPN';
+    }
+    if (status.route === 'device-vpn') {
+        return status.confidence === 'verified'
+            ? '验证结果：手机全局 VPN 已接管，出口 IP 已在云手机内部实测'
+            : '验证结果：检测到手机 VPN，但它不是全局默认网络';
+    }
+    if (status.route === 'host-direct') {
+        return '验证结果：未使用 VPN，云手机与宿主直连出口一致';
+    }
+    return '验证结果：云手机出口与已知宿主/手机路径均不匹配';
+}
+
+export function hostVpnActionLabel(status: NetworkRouteStatus): string {
+    if (status.protection.drifted && status.protection.expectedRoute === 'host-vpn') {
+        return '确认并锁定宿主新节点';
+    }
+    if (status.route === 'host-vpn' && status.protection.enabled) {
+        return '重新验证并锁定宿主 VPN';
+    }
+    return '使用宿主 VPN（验证并锁定）';
+}
+
+export function deviceVpnActionLabel(status: NetworkRouteStatus): string {
+    if (status.route === 'device-vpn' && status.protection.enabled) {
+        return '重新验证并锁定手机 VPN';
+    }
+    return '使用手机 VPN（验证并锁定）';
+}
+
+export function hostVpnTrackingMessage(status: NetworkRouteStatus): string {
+    if (status.protection.drifted && status.protection.expectedRoute === 'host-vpn') {
+        return '已检测到宿主节点或云手机出口变化，业务 App 已停止并拦截网络；点击上面的宿主 VPN 按钮确认新节点。';
+    }
+    if (status.route === 'device-vpn') {
+        return '当前使用手机 VPN，与宿主 VPN 隔离；宿主切换节点不会改变云手机出口。';
+    }
+    if (!status.hostVpn.active) {
+        return '未检测到宿主 VPN；打开宿主 VPN 后，点击上面的宿主 VPN 按钮进行验证。';
+    }
+    if (status.protection.enabled && status.protection.expectedRoute === 'host-vpn') {
+        return '每 15 秒自动检测宿主节点和云手机出口；发生变化时会先停止业务 App 并拦截网络。';
+    }
+    const latestHostChange = status.recentChanges.find((change) => change.scope === 'host-vpn');
+    if (latestHostChange) {
+        return `已检测到宿主节点变化：${latestHostChange.fromIp || '无'} → ${
+            latestHostChange.toIp || '无'
+        }；点击上面的宿主 VPN 按钮验证并锁定。`;
+    }
+    return '点击上面的宿主 VPN 按钮锁定后，将每 15 秒自动检测节点变化并防止 IP 漂移。';
+}
+
+export function networkStatusFailure(httpStatus?: number, output?: string): NetworkStatusFailure {
+    if (httpStatus === 404 && !output) {
+        return {
+            headline: '网络状态接口不存在（HTTP 404）',
+            details: '页面与服务端版本不一致，当前 IP 未验证。修复前请勿打开业务 App。',
+        };
+    }
+    const suffix = httpStatus ? `（HTTP ${httpStatus}）` : '';
+    return {
+        headline: `实际出口 IP：检测失败${suffix}`,
+        details: output || '无法读取网络状态，当前 IP 未验证。请勿打开业务 App。',
+    };
 }
 
 export function statusSummary(status: NetworkRouteStatus): string {
@@ -80,6 +158,7 @@ export function statusDetails(status: NetworkRouteStatus): string[] {
         : '最近变化：本次服务启动后未检测到';
     return [
         `当前路径：${routeLabel(status)}`,
+        statusVerification(status),
         `云手机地区：${locationOf(status)}`,
         androidProxy,
         androidVpn,

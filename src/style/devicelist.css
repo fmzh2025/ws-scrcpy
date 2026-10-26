@@ -162,10 +162,11 @@ body.list #device_list_menu {
 }
 
 #devices .device-list div.desc-block.network-status {
-    align-items: center;
+    align-items: stretch;
+    flex-direction: column;
     gap: .45em;
-    padding: .15em .35em;
-    flex-wrap: wrap;
+    width: min(60em, calc(100% - 1.4em));
+    padding: .45em;
     white-space: normal;
 }
 
@@ -189,18 +190,96 @@ body.list #device_list_menu {
     color: hsl(135, 55%, 38%);
 }
 
+#devices .network-requirements {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: .45em;
+}
+
+#devices .network-requirement {
+    display: flex;
+    flex-direction: column;
+    gap: .3em;
+    min-width: 0;
+    padding: .45em;
+    border: 1px solid var(--device-border-color);
+    border-radius: .3em;
+}
+
+#devices .network-requirement-title {
+    color: var(--text-color);
+}
+
+#devices .network-requirement-description,
+#devices .network-advanced > p {
+    margin: 0;
+    color: var(--text-color-light);
+    line-height: 1.4;
+}
+
+#devices .network-requirement-description[data-network-tone='safe'] {
+    color: hsl(135, 55%, 38%);
+}
+
+#devices .network-requirement-description[data-network-tone='warning'] {
+    color: hsl(35, 80%, 42%);
+}
+
+#devices .network-requirement-description[data-network-tone='danger'] {
+    color: hsl(0, 70%, 48%);
+}
+
+#devices .network-advanced {
+    padding-top: .35em;
+    border-top: 1px solid var(--device-border-color);
+}
+
+#devices .network-advanced > summary {
+    cursor: pointer;
+    color: var(--text-color-light);
+}
+
+#devices .network-advanced > p {
+    margin: .35em 0;
+}
+
+#devices .network-advanced-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35em;
+}
+
 #devices .network-action {
+    min-height: 2em;
     padding: .2em .45em;
     border: 1px solid var(--button-border-color);
     border-radius: .25em;
     color: var(--button-text-color);
     background: var(--main-bg-color);
     cursor: pointer;
+    line-height: 1.3;
+    white-space: normal;
+}
+
+#devices .network-requirement .network-action {
+    width: 100%;
+    margin-top: auto;
+}
+
+#devices .network-action.primary {
+    border-color: var(--url-color);
+    color: var(--url-color);
 }
 
 #devices .network-action:disabled {
     opacity: .55;
     cursor: wait;
+}
+
+@media (max-width: 850px) {
+    #devices .network-requirements {
+        grid-template-columns: 1fr;
+    }
 }
 
 #devices .device-list div.device div.desc-block.stream button.action-button {

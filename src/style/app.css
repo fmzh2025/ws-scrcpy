@@ -415,7 +415,7 @@ body.remote-keyboard {
     z-index: 5;
     display: none;
     box-sizing: border-box;
-    width: min(30rem, 82vw);
+    width: min(420px, calc(100vw - 1rem));
     max-height: min(38rem, 85vh);
     overflow-y: auto;
     padding: .65rem;
@@ -434,10 +434,12 @@ body.remote-keyboard {
 }
 
 .stream-network-ip,
+.stream-network-summary,
 .stream-network-details {
     overflow-wrap: anywhere;
 }
 
+.stream-network-summary,
 .stream-network-details {
     color: var(--text-color-light);
 }
@@ -448,9 +450,76 @@ body.remote-keyboard {
     line-height: 1.35;
 }
 
+.stream-network-requirements {
+    display: grid;
+    gap: .45rem;
+    margin-top: .15rem;
+}
+
+.stream-network-requirement {
+    display: flex;
+    flex-direction: column;
+    gap: .25rem;
+    padding: .5rem;
+    border: 1px solid var(--button-border-color);
+    border-radius: .3rem;
+}
+
+.stream-network-requirement-title {
+    color: var(--text-color);
+}
+
+.stream-network-requirement-description,
+.stream-network-advanced > p {
+    margin: 0;
+    color: var(--text-color-light);
+    line-height: 1.4;
+}
+
+.stream-network-requirement-description[data-network-tone='safe'] {
+    color: hsl(135, 55%, 38%);
+}
+
+.stream-network-requirement-description[data-network-tone='warning'] {
+    color: hsl(35, 80%, 42%);
+}
+
+.stream-network-requirement-description[data-network-tone='danger'] {
+    color: hsl(0, 70%, 48%);
+}
+
+.stream-network-advanced {
+    margin-top: .15rem;
+    padding-top: .35rem;
+    border-top: 1px solid var(--button-border-color);
+}
+
+.stream-network-diagnostics {
+    padding-top: .35rem;
+    border-top: 1px solid var(--button-border-color);
+}
+
+.stream-network-diagnostics > summary {
+    cursor: pointer;
+    color: var(--text-color-light);
+}
+
+.stream-network-diagnostics > .stream-network-details {
+    margin-top: .35rem;
+}
+
+.stream-network-advanced > summary {
+    cursor: pointer;
+    color: var(--text-color-light);
+}
+
+.stream-network-advanced > p {
+    margin: .35rem 0;
+}
+
 .stream-network-actions {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
     gap: .35rem;
 }
 
@@ -472,20 +541,22 @@ body.remote-keyboard {
 
 .stream-network-popover button {
     box-sizing: border-box;
-    width: calc(100% - .2rem);
-    padding: .25rem .15rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    width: 100%;
+    min-height: 2rem;
+    padding: .3rem .45rem;
+    overflow: visible;
+    white-space: normal;
     border: 1px solid var(--button-border-color);
     border-radius: .2rem;
     color: var(--button-text-color);
     background: var(--main-bg-color);
     cursor: pointer;
+    line-height: 1.3;
 }
 
-.stream-network-actions button:last-child:nth-child(odd) {
-    grid-column: 1 / -1;
+.stream-network-popover button.primary {
+    border-color: var(--url-color);
+    color: var(--url-color);
 }
 
 .stream-network-popover button:disabled {

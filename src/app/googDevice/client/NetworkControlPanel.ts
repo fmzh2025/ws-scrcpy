@@ -1,5 +1,16 @@
 import { NetworkRouteStatus } from '../../../types/NetworkRouteStatus';
-import { statusDetails, statusHeadline, statusSummary, statusTone } from './NetworkStatusPresentation';
+import {
+    deviceVpnActionLabel,
+    hostVpnActionLabel,
+    hostVpnTrackingMessage,
+    networkStatusFailure,
+    routeLabel,
+    statusDetails,
+    statusHeadline,
+    statusSummary,
+    statusTone,
+    statusVerification,
+} from './NetworkStatusPresentation';
 
 type NetworkAction = 'apply-host-vpn' | 'lock-device-vpn' | 'clear-android-proxy' | 'lock-current' | 'unlock';
 
@@ -14,6 +25,12 @@ export class NetworkControlPanel {
     private readonly popover: HTMLElement;
     private readonly status: HTMLElement;
     private readonly details: HTMLElement;
+    private readonly diagnostics: HTMLElement;
+    private readonly hostVpnButton: HTMLButtonElement;
+    private readonly deviceVpnButton: HTMLButtonElement;
+    private readonly hostVpnTracking: HTMLElement;
+    private readonly actionButtons: HTMLButtonElement[];
+    private statusAvailable = false;
     private refreshTimer?: number;
 
     public constructor(private readonly udid: string) {
@@ -28,8 +45,12 @@ export class NetworkControlPanel {
         this.trigger.title = 'Network status: checking...';
         this.trigger.setAttribute('aria-label', 'Show network status and proxy controls');
         this.trigger.addEventListener('click', () => {
-            this.popover.classList.toggle('open');
-            this.trigger.setAttribute('aria-expanded', this.popover.classList.contains('open') ? 'true' : 'false');
+            const opening = !this.popover.classList.contains('open');
+            if (opening) {
+                this.positionPopover();
+            }
+            this.popover.classList.toggle('open', opening);
+            this.trigger.setAttribute('aria-expanded', opening ? 'true' : 'false');
         });
         this.trigger.setAttribute('aria-expanded', 'false');
 
@@ -40,25 +61,67 @@ export class NetworkControlPanel {
 
         this.status = document.createElement('strong');
         this.status.className = 'stream-network-ip';
-        this.status.textContent = 'IP checking...';
+        this.status.textContent = '正在读取云手机实际出口…';
         this.details = document.createElement('div');
-        this.details.className = 'stream-network-details';
-        this.details.textContent = 'Checking region';
-        let buttons: HTMLButtonElement[] = [];
-        const hostVpnButton = this.createButton('应用并锁定宿主 VPN', () => this.runAction('apply-host-vpn', buttons));
-        const deviceVpnButton = this.createButton('锁定手机 VPN', () => this.runAction('lock-device-vpn', buttons));
-        const lockButton = this.createButton('锁定当前出口', () => this.runAction('lock-current', buttons));
-        const clearButton = this.createButton('仅清 Android 代理', () =>
-            this.runAction('clear-android-proxy', buttons),
+        this.details.className = 'stream-network-summary';
+        this.details.textContent = '尚未验证出口 IP，请勿先打开业务 App。';
+        const diagnosticsDisclosure = document.createElement('details');
+        diagnosticsDisclosure.className = 'stream-network-diagnostics';
+        const diagnosticsSummary = document.createElement('summary');
+        diagnosticsSummary.textContent = '查看检测详情';
+        this.diagnostics = document.createElement('div');
+        this.diagnostics.className = 'stream-network-details';
+        diagnosticsDisclosure.append(diagnosticsSummary, this.diagnostics);
+
+        this.hostVpnButton = this.createButton('使用宿主 VPN（验证并锁定）', () => this.runAction('apply-host-vpn'));
+        this.hostVpnButton.classList.add('primary');
+        this.hostVpnButton.title = '停止第三方应用，验证云手机实际出口与宿主 VPN 一致，然后锁定该出口';
+        this.deviceVpnButton = this.createButton('使用手机 VPN（验证并锁定）', () => this.runAction('lock-device-vpn'));
+        this.deviceVpnButton.classList.add('primary');
+        this.deviceVpnButton.title = '请先在云手机内启动全局 VPN，再验证并锁定手机 VPN 的实际出口';
+        const lockButton = this.createButton('重新锁定当前实测 IP', () => this.runAction('lock-current'));
+        lockButton.title = '把当前已经验证的出口重新设为防漂移基准';
+        const clearButton = this.createButton('仅清除 Android HTTP 代理', () => this.runAction('clear-android-proxy'));
+        clearButton.title = '只清除 Android HTTP 代理；不会关闭宿主 VPN，也不保证变成国内 IP';
+        const unlockButton = this.createButton('关闭 IP 防漂移保护', () => this.runAction('unlock'));
+        unlockButton.title = '关闭 IP 变化时的自动停应用和网络拦截';
+        this.actionButtons = [this.hostVpnButton, this.deviceVpnButton, lockButton, clearButton, unlockButton];
+        this.setActionsDisabled(true);
+
+        const requirements = document.createElement('div');
+        requirements.className = 'stream-network-requirements';
+        requirements.append(
+            this.createRequirement(
+                '① 使用宿主 VPN',
+                '验证云手机实测 IP 与宿主 VPN 出口一致；成功后锁定 IP，防止业务 App 在线时发生漂移。',
+                this.hostVpnButton,
+            ),
+            this.createRequirement(
+                '② 使用手机 VPN',
+                '先在云手机内启动全局 VPN，再验证并锁定；该出口与宿主 VPN 相互隔离。',
+                this.deviceVpnButton,
+            ),
         );
-        const unlockButton = this.createButton('解除 IP 锁定', () => this.runAction('unlock', buttons));
-        buttons = [hostVpnButton, deviceVpnButton, lockButton, clearButton, unlockButton];
-        const buttonGroup = document.createElement('div');
-        buttonGroup.className = 'stream-network-actions';
-        buttonGroup.append(...buttons);
-        this.popover.append(this.status, this.details, buttonGroup);
+        this.hostVpnTracking = document.createElement('p');
+        this.hostVpnTracking.className = 'stream-network-requirement-description';
+        this.hostVpnTracking.textContent = '等待网络状态后开始监控。';
+        requirements.append(this.createRequirement('③ 宿主节点切换自动检测', this.hostVpnTracking));
+
+        const advanced = document.createElement('details');
+        advanced.className = 'stream-network-advanced';
+        const advancedSummary = document.createElement('summary');
+        advancedSummary.textContent = '高级操作（仅用于排障）';
+        const advancedHint = document.createElement('p');
+        advancedHint.textContent = '这些操作不等于“使用宿主 VPN”，一般无需点击。';
+        const advancedActions = document.createElement('div');
+        advancedActions.className = 'stream-network-actions';
+        advancedActions.append(lockButton, clearButton, unlockButton);
+        advanced.append(advancedSummary, advancedHint, advancedActions);
+
+        this.popover.append(this.status, this.details, requirements, diagnosticsDisclosure, advanced);
         this.root.append(this.trigger, this.popover);
         document.addEventListener('visibilitychange', this.onVisibilityChange);
+        window.addEventListener('resize', this.onResize);
         void this.refresh();
         this.startRefreshTimer();
     }
@@ -69,6 +132,7 @@ export class NetworkControlPanel {
 
     public release(): void {
         document.removeEventListener('visibilitychange', this.onVisibilityChange);
+        window.removeEventListener('resize', this.onResize);
         this.stopRefreshTimer();
         this.root.remove();
     }
@@ -96,12 +160,77 @@ export class NetworkControlPanel {
         }
     };
 
+    private onResize = (): void => {
+        if (this.popover.classList.contains('open')) {
+            this.positionPopover();
+        }
+    };
+
+    private positionPopover(): void {
+        const rootRect = this.root.getBoundingClientRect();
+        const edgePadding = 8;
+        const gap = 6;
+        const leftSpace = Math.max(0, rootRect.left - edgePadding - gap);
+        const rightSpace = Math.max(0, window.innerWidth - rootRect.right - edgePadding - gap);
+        const openLeft = leftSpace >= rightSpace;
+        const availableWidth = openLeft ? leftSpace : rightSpace;
+
+        if (availableWidth < 260) {
+            this.popover.style.position = 'fixed';
+            this.popover.style.left = `${edgePadding}px`;
+            this.popover.style.right = `${edgePadding}px`;
+            this.popover.style.bottom = `${edgePadding}px`;
+            this.popover.style.width = 'auto';
+            return;
+        }
+
+        this.popover.style.position = 'absolute';
+        this.popover.style.bottom = '0';
+        this.popover.style.width = `${Math.min(420, availableWidth)}px`;
+        if (openLeft) {
+            this.popover.style.left = 'auto';
+            this.popover.style.right = 'calc(100% + .35rem)';
+        } else {
+            this.popover.style.left = 'calc(100% + .35rem)';
+            this.popover.style.right = 'auto';
+        }
+    }
+
     private createButton(label: string, onClick: () => void): HTMLButtonElement {
         const button = document.createElement('button');
         button.type = 'button';
         button.textContent = label;
         button.addEventListener('click', onClick);
         return button;
+    }
+
+    private createRequirement(
+        title: string,
+        description: string | HTMLElement,
+        button?: HTMLButtonElement,
+    ): HTMLElement {
+        const requirement = document.createElement('section');
+        requirement.className = 'stream-network-requirement';
+        const heading = document.createElement('strong');
+        heading.className = 'stream-network-requirement-title';
+        heading.textContent = title;
+        requirement.appendChild(heading);
+        if (typeof description === 'string') {
+            const paragraph = document.createElement('p');
+            paragraph.className = 'stream-network-requirement-description';
+            paragraph.textContent = description;
+            requirement.appendChild(paragraph);
+        } else {
+            requirement.appendChild(description);
+        }
+        if (button) {
+            requirement.appendChild(button);
+        }
+        return requirement;
+    }
+
+    private setActionsDisabled(disabled: boolean): void {
+        this.actionButtons.forEach((button) => (button.disabled = disabled));
     }
 
     private async refresh(force = false): Promise<void> {
@@ -112,22 +241,22 @@ export class NetworkControlPanel {
             );
             const result = (await response.json().catch(() => ({}))) as NetworkStatusResponse;
             if (!response.ok || !result.status) {
-                throw new Error(result.output || `Unable to read network status (${response.status})`);
+                this.renderUnavailable(response.status, result.output);
+                return;
             }
             this.render(result.status);
         } catch (error: unknown) {
-            this.status.textContent = '实际出口 IP：检测失败';
-            this.details.textContent = error instanceof Error ? error.message : 'Network status failed';
-            this.trigger.title = this.details.textContent;
-            this.root.setAttribute('data-network-tone', 'danger');
+            this.renderUnavailable(undefined, error instanceof Error ? error.message : undefined);
         }
     }
 
     private render(status: NetworkRouteStatus): void {
-        this.status.textContent = statusHeadline(status);
+        this.statusAvailable = true;
+        this.status.textContent = `${statusHeadline(status)} · ${routeLabel(status)}`;
         this.trigger.title = statusDetails(status).join('\n');
         this.root.setAttribute('data-network-tone', statusTone(status));
-        this.details.replaceChildren(
+        this.details.textContent = statusVerification(status);
+        this.diagnostics.replaceChildren(
             ...statusDetails(status).map((line) => {
                 const element = document.createElement('span');
                 element.textContent = line;
@@ -135,10 +264,35 @@ export class NetworkControlPanel {
             }),
         );
         this.trigger.setAttribute('aria-label', statusSummary(status));
+        this.hostVpnButton.textContent = hostVpnActionLabel(status);
+        this.deviceVpnButton.textContent = deviceVpnActionLabel(status);
+        this.hostVpnTracking.textContent = hostVpnTrackingMessage(status);
+        this.hostVpnTracking.setAttribute(
+            'data-network-tone',
+            status.protection.drifted && status.protection.expectedRoute === 'host-vpn' ? 'danger' : statusTone(status),
+        );
+        this.setActionsDisabled(false);
     }
 
-    private async runAction(action: NetworkAction, buttons: HTMLButtonElement[]): Promise<void> {
-        buttons.forEach((button) => (button.disabled = true));
+    private renderUnavailable(httpStatus?: number, output?: string): void {
+        const failure = networkStatusFailure(httpStatus, output);
+        this.statusAvailable = false;
+        this.status.textContent = failure.headline;
+        this.details.textContent = failure.details;
+        this.diagnostics.replaceChildren();
+        this.hostVpnTracking.textContent = '自动检测暂不可用；接口恢复前无法确认宿主节点或云手机出口变化。';
+        this.hostVpnTracking.setAttribute('data-network-tone', 'danger');
+        this.trigger.title = `${failure.headline}\n${failure.details}`;
+        this.trigger.setAttribute('aria-label', failure.headline);
+        this.root.setAttribute('data-network-tone', 'danger');
+        this.setActionsDisabled(true);
+    }
+
+    private async runAction(action: NetworkAction): Promise<void> {
+        if (!this.statusAvailable) {
+            return;
+        }
+        this.setActionsDisabled(true);
         try {
             const response = await fetch(this.endpoint('network/proxy'), {
                 method: 'POST',
@@ -147,7 +301,13 @@ export class NetworkControlPanel {
             });
             const result = (await response.json().catch(() => ({}))) as NetworkStatusResponse;
             if (!response.ok) {
-                throw new Error(result.output || `Unable to change proxy (${response.status})`);
+                if (response.status === 404) {
+                    this.renderUnavailable(response.status, result.output);
+                } else {
+                    this.details.textContent = `操作失败：${result.output || `HTTP ${response.status}`}`;
+                    this.root.setAttribute('data-network-tone', 'danger');
+                }
+                return;
             }
             if (result.status) {
                 this.render(result.status);
@@ -155,10 +315,9 @@ export class NetworkControlPanel {
                 await this.refresh(true);
             }
         } catch (error: unknown) {
-            this.details.textContent = error instanceof Error ? error.message : 'Proxy change failed';
-            this.root.setAttribute('data-network-tone', 'danger');
+            this.renderUnavailable(undefined, error instanceof Error ? error.message : '网络操作请求失败');
         } finally {
-            buttons.forEach((button) => (button.disabled = false));
+            this.setActionsDisabled(!this.statusAvailable);
         }
     }
 

@@ -17,7 +17,17 @@ import { HostItem } from '../../../types/Configuration';
 import { ChannelCode } from '../../../common/ChannelCode';
 import { Tool } from '../../client/Tool';
 import { NetworkRouteStatus } from '../../../types/NetworkRouteStatus';
-import { statusDetails, statusHeadline, statusSummary, statusTone } from './NetworkStatusPresentation';
+import {
+    deviceVpnActionLabel,
+    hostVpnActionLabel,
+    hostVpnTrackingMessage,
+    networkStatusFailure,
+    routeLabel,
+    statusDetails,
+    statusHeadline,
+    statusTone,
+    statusVerification,
+} from './NetworkStatusPresentation';
 
 type Field = keyof GoogDeviceDescriptor | ((descriptor: GoogDeviceDescriptor) => string);
 type DescriptionColumn = { title: string; field: Field };
@@ -26,7 +36,11 @@ type NetworkAction = 'apply-host-vpn' | 'lock-device-vpn' | 'clear-android-proxy
 type NetworkEntry = {
     status: HTMLElement;
     details: HTMLElement;
+    hostVpnButton: HTMLButtonElement;
+    deviceVpnButton: HTMLButtonElement;
+    hostVpnTracking: HTMLElement;
     buttons: HTMLButtonElement[];
+    statusAvailable: boolean;
 };
 
 const DESC_COLUMNS: DescriptionColumn[] = [
@@ -386,34 +400,75 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
 
         const status = document.createElement('strong');
         status.className = 'network-ip';
-        status.textContent = 'IP checking...';
+        status.textContent = '正在读取云手机实际出口…';
         const details = document.createElement('span');
         details.className = 'network-details';
-        details.textContent = 'Checking region';
+        details.textContent = '尚未验证出口 IP，请勿先打开业务 App。';
 
-        let actionButtons: HTMLButtonElement[] = [];
-        const hostVpnButton = this.createNetworkButton('应用并锁定宿主 VPN', () =>
-            this.runNetworkAction(udid, 'apply-host-vpn', actionButtons),
+        const hostVpnButton = this.createNetworkButton('使用宿主 VPN（验证并锁定）', () =>
+            this.runNetworkAction(udid, 'apply-host-vpn'),
         );
-        const deviceVpnButton = this.createNetworkButton('锁定手机 VPN', () =>
-            this.runNetworkAction(udid, 'lock-device-vpn', actionButtons),
+        hostVpnButton.classList.add('primary');
+        hostVpnButton.title = '停止第三方应用，验证云手机实际出口与宿主 VPN 一致，然后锁定该出口';
+        const deviceVpnButton = this.createNetworkButton('使用手机 VPN（验证并锁定）', () =>
+            this.runNetworkAction(udid, 'lock-device-vpn'),
         );
-        const lockButton = this.createNetworkButton('锁定当前出口', () =>
-            this.runNetworkAction(udid, 'lock-current', actionButtons),
+        deviceVpnButton.classList.add('primary');
+        deviceVpnButton.title = '请先在云手机内启动全局 VPN，再验证并锁定手机 VPN 的实际出口';
+        const lockButton = this.createNetworkButton('重新锁定当前实测 IP', () =>
+            this.runNetworkAction(udid, 'lock-current'),
         );
-        const clearButton = this.createNetworkButton('仅清 Android 代理', () =>
-            this.runNetworkAction(udid, 'clear-android-proxy', actionButtons),
+        lockButton.title = '把当前已经验证的出口重新设为防漂移基准';
+        const clearButton = this.createNetworkButton('仅清除 Android HTTP 代理', () =>
+            this.runNetworkAction(udid, 'clear-android-proxy'),
         );
-        const unlockButton = this.createNetworkButton('解除 IP 锁定', () =>
-            this.runNetworkAction(udid, 'unlock', actionButtons),
+        clearButton.title = '只清除 Android HTTP 代理；不会关闭宿主 VPN，也不保证变成国内 IP';
+        const unlockButton = this.createNetworkButton('关闭 IP 防漂移保护', () =>
+            this.runNetworkAction(udid, 'unlock'),
         );
-        actionButtons = [hostVpnButton, deviceVpnButton, lockButton, clearButton, unlockButton];
+        unlockButton.title = '关闭 IP 变化时的自动停应用和网络拦截';
+        const actionButtons = [hostVpnButton, deviceVpnButton, lockButton, clearButton, unlockButton];
+        actionButtons.forEach((button) => (button.disabled = true));
 
-        entry.append(status, details, ...actionButtons);
+        const requirements = document.createElement('div');
+        requirements.className = 'network-requirements';
+        requirements.append(
+            this.createNetworkRequirement(
+                '① 使用宿主 VPN',
+                '验证云手机实测 IP 与宿主 VPN 出口一致，成功后锁定并防止 IP 漂移。',
+                hostVpnButton,
+            ),
+            this.createNetworkRequirement(
+                '② 使用手机 VPN',
+                '先在云手机内启动全局 VPN，再验证并锁定；该出口与宿主 VPN 隔离。',
+                deviceVpnButton,
+            ),
+        );
+        const hostVpnTracking = document.createElement('p');
+        hostVpnTracking.className = 'network-requirement-description';
+        hostVpnTracking.textContent = '等待网络状态后开始监控。';
+        requirements.append(this.createNetworkRequirement('③ 宿主节点切换自动检测', hostVpnTracking));
+
+        const advanced = document.createElement('details');
+        advanced.className = 'network-advanced';
+        const advancedSummary = document.createElement('summary');
+        advancedSummary.textContent = '高级操作（仅用于排障）';
+        const advancedHint = document.createElement('p');
+        advancedHint.textContent = '这些操作不等于“使用宿主 VPN”，一般无需点击。';
+        const advancedActions = document.createElement('div');
+        advancedActions.className = 'network-advanced-actions';
+        advancedActions.append(lockButton, clearButton, unlockButton);
+        advanced.append(advancedSummary, advancedHint, advancedActions);
+
+        entry.append(status, details, requirements, advanced);
         this.networkEntries.set(udid, {
             status,
             details,
+            hostVpnButton,
+            deviceVpnButton,
+            hostVpnTracking,
             buttons: actionButtons,
+            statusAvailable: false,
         });
         void this.refreshNetworkStatus(udid);
         return entry;
@@ -449,6 +504,31 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         return button;
     }
 
+    private createNetworkRequirement(
+        title: string,
+        description: string | HTMLElement,
+        button?: HTMLButtonElement,
+    ): HTMLElement {
+        const requirement = document.createElement('section');
+        requirement.className = 'network-requirement';
+        const heading = document.createElement('strong');
+        heading.className = 'network-requirement-title';
+        heading.textContent = title;
+        requirement.appendChild(heading);
+        if (typeof description === 'string') {
+            const paragraph = document.createElement('p');
+            paragraph.className = 'network-requirement-description';
+            paragraph.textContent = description;
+            requirement.appendChild(paragraph);
+        } else {
+            requirement.appendChild(description);
+        }
+        if (button) {
+            requirement.appendChild(button);
+        }
+        return requirement;
+    }
+
     private async refreshNetworkStatus(udid: string): Promise<void> {
         const entry = this.networkEntries.get(udid);
         if (!entry) {
@@ -463,25 +543,49 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 output?: string;
             };
             if (!response.ok || !result.status) {
-                throw new Error(result.output || `Unable to read network status (${response.status})`);
+                this.renderNetworkUnavailable(entry, response.status, result.output);
+                return;
             }
             this.renderNetworkStatus(entry, result.status);
         } catch (error: unknown) {
-            entry.status.textContent = '实际出口 IP：检测失败';
-            entry.details.textContent = error instanceof Error ? error.message : 'Network status failed';
-            entry.details.setAttribute('data-network-tone', 'danger');
+            this.renderNetworkUnavailable(entry, undefined, error instanceof Error ? error.message : undefined);
         }
     }
 
     private renderNetworkStatus(entry: NetworkEntry, status: NetworkRouteStatus): void {
-        entry.status.textContent = `${statusHeadline(status)} · ${statusSummary(status).split(' | ')[1]}`;
+        entry.statusAvailable = true;
+        entry.status.textContent = `${statusHeadline(status)} · ${routeLabel(status)}`;
         entry.status.title = statusDetails(status).join('\n');
-        entry.details.textContent = statusDetails(status).join(' | ');
+        entry.details.textContent = statusVerification(status);
         entry.details.setAttribute('data-network-tone', statusTone(status));
+        entry.hostVpnButton.textContent = hostVpnActionLabel(status);
+        entry.deviceVpnButton.textContent = deviceVpnActionLabel(status);
+        entry.hostVpnTracking.textContent = hostVpnTrackingMessage(status);
+        entry.hostVpnTracking.setAttribute(
+            'data-network-tone',
+            status.protection.drifted && status.protection.expectedRoute === 'host-vpn' ? 'danger' : statusTone(status),
+        );
+        entry.buttons.forEach((button) => (button.disabled = false));
     }
 
-    private async runNetworkAction(udid: string, action: NetworkAction, buttons: HTMLButtonElement[]): Promise<void> {
-        buttons.forEach((button) => (button.disabled = true));
+    private renderNetworkUnavailable(entry: NetworkEntry, httpStatus?: number, output?: string): void {
+        const failure = networkStatusFailure(httpStatus, output);
+        entry.statusAvailable = false;
+        entry.status.textContent = failure.headline;
+        entry.status.title = `${failure.headline}\n${failure.details}`;
+        entry.details.textContent = failure.details;
+        entry.details.setAttribute('data-network-tone', 'danger');
+        entry.hostVpnTracking.textContent = '自动检测暂不可用；接口恢复前无法确认宿主节点或云手机出口变化。';
+        entry.hostVpnTracking.setAttribute('data-network-tone', 'danger');
+        entry.buttons.forEach((button) => (button.disabled = true));
+    }
+
+    private async runNetworkAction(udid: string, action: NetworkAction): Promise<void> {
+        const entry = this.networkEntries.get(udid);
+        if (!entry?.statusAvailable) {
+            return;
+        }
+        entry.buttons.forEach((button) => (button.disabled = true));
         try {
             const response = await fetch(this.endpoint('network/proxy'), {
                 method: 'POST',
@@ -493,22 +597,27 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 status?: NetworkRouteStatus;
             };
             if (!response.ok) {
-                throw new Error(result.output || `Unable to change proxy (${response.status})`);
+                if (response.status === 404) {
+                    this.renderNetworkUnavailable(entry, response.status, result.output);
+                } else {
+                    entry.details.textContent = `操作失败：${result.output || `HTTP ${response.status}`}`;
+                    entry.details.setAttribute('data-network-tone', 'danger');
+                }
+                return;
             }
-            const entry = this.networkEntries.get(udid);
-            if (entry && result.status) {
+            if (result.status) {
                 this.renderNetworkStatus(entry, result.status);
             } else {
                 await this.refreshNetworkStatus(udid);
             }
         } catch (error: unknown) {
-            const entry = this.networkEntries.get(udid);
-            if (entry) {
-                entry.details.textContent = error instanceof Error ? error.message : 'Proxy change failed';
-                entry.details.setAttribute('data-network-tone', 'danger');
-            }
+            this.renderNetworkUnavailable(
+                entry,
+                undefined,
+                error instanceof Error ? error.message : '网络操作请求失败',
+            );
         } finally {
-            buttons.forEach((button) => (button.disabled = false));
+            entry.buttons.forEach((button) => (button.disabled = !entry.statusAvailable));
         }
     }
 
