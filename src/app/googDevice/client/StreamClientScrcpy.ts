@@ -233,9 +233,9 @@ export class StreamClientScrcpy
 
         this.clientsCount = info.connectionCount;
         let min = VideoSettings.copy(videoSettings);
-        const oldInfo = this.player.getScreenInfo();
+        const oldInfo = this.player.getStreamScreenInfo();
         if (!screenInfo.equals(oldInfo)) {
-            this.player.setScreenInfo(screenInfo);
+            this.player.setStreamScreenInfo(screenInfo);
         }
 
         if (!videoSettings.equals(currentSettings)) {

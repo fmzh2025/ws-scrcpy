@@ -24,13 +24,17 @@ Safari地址栏、键盘和横竖屏变化只触发H5等比缩放，不反复改
 
 ## 验证
 
-本地：`node scripts/test-display-profiles.js`、`node scripts/test-touch-input.js`，以及生产前后端构建。
+本地：`node scripts/test-display-profiles.js`、`node scripts/test-display-readiness.js`、`node scripts/test-touch-input.js`，以及生产前后端构建。
 
 手机：适配后检查完整桌面和正常文字比例；打开应用，点击四角附近按钮，滑动列表、测试双指及输入法；刷新网页确认保留；展开/收起Safari工具栏确认没有反复重排；最后验证恢复原始屏幕。桌面浏览器按402×639模拟不等同于iPhone Safari实机验收。
 
 ## 故障与恢复
 
 新画面未就绪时保持触控暂停，菜单会提供 **重新连接画面**。请求中断不代表修改未执行，界面会重新读取Android实际配置再决定是否恢复触控。服务升级期间旧页面可能断流，刷新即可重新连接。
+
+画面校验同时支持 MSE 的 video 和 WebCodecs 的 Canvas。以服务器原始 `ScreenInfo` 核对 Android 逻辑尺寸，以实际呈现的帧核对编码尺寸；WebCodecs 为 Canvas 生成的尺寸不覆盖原始元数据。静止桌面只要已呈现帧即可恢复触控。诊断菜单版本为 `iPhone-v7-20261026`；触控层的 `data-touch-state` 标记 `suspended` / `ready`，便于只读排障。
+
+Safari 不提供普通 `MediaSource` 时，旧 `player=mse` 链接会在支持 WebCodecs 的浏览器自动改用它并更新地址。也可使用 `iphone-touch.html` 自动选择播放器；不要把桌面 MSE 验证等同于手机 Canvas 播放器验证。
 
 管理员可先备份上述配置目录，再通过本页面“恢复原始屏幕”恢复。不要仅删除JSON文件：这不会自动恢复Android覆盖值。若确认首次适配前没有尺寸/DPI覆盖，也可在停止服务或移走该设备配置后，通过ADB执行 `wm size reset` / `wm density reset`；否则应还原JSON中 `original` 记录的具体覆盖值。
 

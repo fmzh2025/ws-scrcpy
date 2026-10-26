@@ -35,6 +35,15 @@ async function startApplication(): Promise<void> {
     /// #endif
 
     if (action === StreamClientScrcpy.ACTION && typeof parsedQuery.get('udid') === 'string') {
+        const players = StreamClientScrcpy.getPlayers();
+        if (
+            parsedQuery.get('player') === 'mse' &&
+            !players.some((player) => player.playerCodeName === 'mse') &&
+            players.some((player) => player.playerCodeName === 'webcodecs')
+        ) {
+            parsedQuery.set('player', 'webcodecs');
+            history.replaceState(null, '', `${location.pathname}${location.search}#!${parsedQuery.toString()}`);
+        }
         StreamClientScrcpy.start(parsedQuery);
         return;
     }

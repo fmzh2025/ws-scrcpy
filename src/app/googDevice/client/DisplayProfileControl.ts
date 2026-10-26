@@ -17,7 +17,6 @@ export class DisplayProfileControl {
         private readonly udid: string,
         private readonly player: BasePlayer,
         private readonly view: HTMLElement,
-        private readonly videoContainer: HTMLElement,
         menu: HTMLElement,
         private readonly suspend: (suspended: boolean) => void,
         private readonly changing: (changing: boolean) => void,
@@ -112,8 +111,6 @@ export class DisplayProfileControl {
 
     private waitForFrame(target: DisplaySize): Promise<void> {
         const deadline = Date.now() + 20000;
-        const video = this.videoContainer.querySelector<HTMLVideoElement>('video');
-        const initialTime = video?.currentTime;
         return new Promise((resolve, reject) => {
             this.cancelWait = () => reject(new Error('画面已断开'));
             const check = () => {
@@ -121,20 +118,18 @@ export class DisplayProfileControl {
                     reject(new Error('画面已断开'));
                     return;
                 }
-                const info = this.player.getScreenInfo();
+                const info = this.player.getStreamScreenInfo();
                 const rect = info?.contentRect;
                 const sourceMatches =
                     rect &&
                     ((rect.getWidth() === target.width && rect.getHeight() === target.height) ||
                         (rect.getHeight() === target.width && rect.getWidth() === target.height));
+                const frame = this.player.getPresentedFrameSize();
                 const decodedMatches =
-                    video &&
+                    frame &&
                     info &&
-                    video.readyState >= 2 &&
-                    !video.error &&
-                    Math.abs(video.videoWidth - info.videoSize.width) <= 2 &&
-                    Math.abs(video.videoHeight - info.videoSize.height) <= 2 &&
-                    Math.abs(video.currentTime - (initialTime || 0)) > 0.001;
+                    Math.abs(frame.width - info.videoSize.width) <= 2 &&
+                    Math.abs(frame.height - info.videoSize.height) <= 2;
                 if (sourceMatches && decodedMatches) {
                     this.cancelWait = undefined;
                     resolve();

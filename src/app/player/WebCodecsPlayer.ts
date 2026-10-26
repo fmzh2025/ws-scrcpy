@@ -184,6 +184,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
             if (data) {
                 const frame: VideoFrame = data.frame;
                 this.context.drawImage(frame, 0, 0);
+                this.markFramePresented(frame.displayWidth, frame.displayHeight);
                 frame.close();
             }
         }

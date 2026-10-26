@@ -47,6 +47,7 @@ export class FeaturedInteractionHandler extends InteractionHandler {
             this.needsNewDown = true;
         }
         this.suspended = suspended;
+        this.tag.dataset.touchState = suspended ? 'suspended' : 'ready';
     }
 
     constructor(player: BasePlayer, public readonly listener: InteractionHandlerListener) {
@@ -77,6 +78,7 @@ export class FeaturedInteractionHandler extends InteractionHandler {
 
     protected onInteraction(event: MouseEvent | TouchEvent): void {
         if (this.suspended) {
+            TouchDiagnostics.ignored('屏幕同步中，触控已暂停');
             if (event.target === this.tag && event.cancelable) event.preventDefault();
             return;
         }

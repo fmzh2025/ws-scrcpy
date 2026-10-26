@@ -241,6 +241,14 @@ export class MsePlayer extends BasePlayer {
         return MsePlayer.preferredVideoSettings;
     }
 
+    public getPresentedFrameSize(): Size | undefined {
+        const video = this.tag;
+        if (video.readyState >= 2 && !video.error && video.videoWidth > 0 && video.videoHeight > 0) {
+            return new Size(video.videoWidth, video.videoHeight);
+        }
+        return undefined;
+    }
+
     checkVideoResize = (): void => {
         if (!this.tag) {
             return;

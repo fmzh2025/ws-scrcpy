@@ -60,7 +60,7 @@ export class MobileStreamView {
         menu.insertBefore(this.closeMenu, menu.firstChild);
         // Ignore the previous release's saved fill preference: all mobile video
         // now keeps its proportions. Android's display is adapted explicitly.
-        this.displayControl = new DisplayProfileControl(udid, player, view, video, menu, suspend, changing);
+        this.displayControl = new DisplayProfileControl(udid, player, view, menu, suspend, changing);
         player.on('video-view-resize', this.layout);
         window.addEventListener('resize', this.scheduleLayout);
         window.visualViewport?.addEventListener('resize', this.scheduleLayout);

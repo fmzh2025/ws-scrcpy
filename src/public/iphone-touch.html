@@ -16,7 +16,7 @@
 </head>
 <body>
     <h1>云手机</h1>
-    <p>页面版本：<strong>iPhone-v4-20261026</strong></p>
+    <p>页面版本：<strong>iPhone-v7-20261026</strong></p>
     <p id="status">正在检查浏览器支持。</p>
     <a id="start" aria-disabled="true">进入云手机</a>
     <p>手机画面自动适配可用屏幕。点右下角“⋯”展开控制栏，再点栏内“⋯”打开设置。</p>
@@ -32,7 +32,7 @@
                 return;
             }
             var url = new URL('./', location.href);
-            url.searchParams.set('v', 'iphone-v4-20261026');
+            url.searchParams.set('v', 'iphone-v7-20261026');
             url.hash = '!' + new URLSearchParams({action: 'stream', udid: 'emulator-5554', player: webcodecs ? 'webcodecs' : 'mse'}).toString();
             var start = document.getElementById('start');
             start.href = url.toString();

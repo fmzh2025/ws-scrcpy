@@ -68,6 +68,7 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
             if (data) {
                 const { frame, width, height } = data;
                 this.canvas.decode(frame, width, height);
+                this.markFramePresented(width, height);
             }
         }
         if (this.decodedFrames.length) {
