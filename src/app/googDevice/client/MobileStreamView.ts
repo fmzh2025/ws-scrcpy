@@ -36,6 +36,7 @@ export class MobileStreamView {
         private readonly menu: HTMLElement,
         udid: string,
         suspend: (suspended: boolean) => void,
+        changing: (changing: boolean) => void,
     ) {
         view.classList.add('mobile-stream-view');
         this.toggle.className = 'mobile-controls-toggle';
@@ -59,7 +60,7 @@ export class MobileStreamView {
         menu.insertBefore(this.closeMenu, menu.firstChild);
         // Ignore the previous release's saved fill preference: all mobile video
         // now keeps its proportions. Android's display is adapted explicitly.
-        this.displayControl = new DisplayProfileControl(udid, player, view, video, menu, suspend);
+        this.displayControl = new DisplayProfileControl(udid, player, view, video, menu, suspend, changing);
         player.on('video-view-resize', this.layout);
         window.addEventListener('resize', this.scheduleLayout);
         window.visualViewport?.addEventListener('resize', this.scheduleLayout);

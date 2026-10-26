@@ -20,6 +20,7 @@ export class DisplayProfileControl {
         private readonly videoContainer: HTMLElement,
         menu: HTMLElement,
         private readonly suspend: (suspended: boolean) => void,
+        private readonly changing: (changing: boolean) => void,
     ) {
         this.root.className = 'mobile-display-profile';
         this.adapt.textContent = '适配当前手机';
@@ -35,13 +36,29 @@ export class DisplayProfileControl {
         this.reconnect.onclick = () => location.reload();
         this.root.append(this.adapt, this.restore, this.reconnect, this.message);
         menu.insertBefore(this.root, menu.querySelector('.mobile-menu-close')?.nextSibling || null);
-        void this.request()
-            .then((status) => {
-                if (!this.busy && !this.released) this.describe(status);
-            })
-            .catch(() => {
-                if (!this.busy && !this.released) this.message.textContent = '屏幕配置暂不可用，可稍后重试。';
-            });
+        void this.initialize();
+    }
+
+    private async initialize(): Promise<void> {
+        this.busy = true;
+        this.adapt.disabled = this.restore.disabled = true;
+        this.suspend(true);
+        try {
+            const status = await this.request();
+            await this.waitForFrame(status.current.override || status.current.physical);
+            if (!this.released) {
+                this.suspend(false);
+                this.describe(status);
+            }
+        } catch (error: unknown) {
+            if (!this.released) {
+                this.message.textContent = error instanceof Error ? error.message : '屏幕配置暂不可用';
+                this.reconnect.hidden = false;
+            }
+        } finally {
+            this.busy = false;
+            if (!this.released) this.adapt.disabled = this.restore.disabled = false;
+        }
     }
 
     private endpoint(): URL {
@@ -146,29 +163,25 @@ export class DisplayProfileControl {
         this.reconnect.hidden = true;
         this.message.textContent = operation === 'adapt' ? '正在适配并保存，等待新画面…' : '正在恢复原始屏幕…';
         this.suspend(true);
+        this.changing(true);
         try {
             const status = await this.request(operation, viewport);
-            await this.waitForFrame(status.current.override || status.current.physical);
             if (!this.released) {
-                this.suspend(false);
                 this.describe(status);
+                this.message.textContent += ' 正在重新连接画面…';
+                // The bundled scrcpy fork caches display geometry. Its server
+                // is rebuilt by the API; reconnect with a fresh MSE decoder.
+                location.reload();
             }
         } catch (error: unknown) {
             if (!this.released) {
                 this.message.textContent = error instanceof Error ? error.message : '屏幕配置失败';
-                // The request may have completed even if the HTTP connection failed.
-                // Read Android's actual state before deciding it is safe to resume.
-                try {
-                    const actual = await this.request();
-                    await this.waitForFrame(actual.current.override || actual.current.physical);
-                    if (!this.released) this.suspend(false);
-                } catch (_) {
-                    this.reconnect.hidden = false;
-                    this.message.textContent += '；触控已暂停，可重新连接画面。';
-                }
+                this.reconnect.hidden = false;
+                this.message.textContent += '；触控已暂停，请重新连接画面。';
             }
         } finally {
             this.busy = false;
+            this.changing(false);
             if (!this.released) this.adapt.disabled = this.restore.disabled = false;
         }
     }

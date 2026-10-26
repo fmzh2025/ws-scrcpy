@@ -585,4 +585,18 @@ export class Device extends TypedEmitter<DeviceEvents> {
             throw error;
         }
     }
+
+    public async restartDisplayStream(): Promise<void> {
+        const pids = await ScrcpyServer.getServerPid(this);
+        for (const pid of pids || []) await this.killProcess(pid);
+        for (let attempt = 0; attempt < 30; attempt++) {
+            const remaining = await ScrcpyServer.getServerPid(this);
+            if (!remaining?.length) {
+                if (await this.startServer()) return;
+                throw new Error('云手机串流未能重新启动');
+            }
+            await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        throw new Error('旧串流进程尚未退出');
+    }
 }

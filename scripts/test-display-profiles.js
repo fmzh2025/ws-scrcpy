@@ -29,6 +29,7 @@ class Device {
         }
         throw new Error(`Unexpected command: ${command}`);
     }
+    async restartDisplayStream() { this.restarts = (this.restarts || 0) + 1; }
 }
 
 (async () => {
@@ -43,6 +44,7 @@ class Device {
         let status = await service.adapt(device, {width:402,height:639});
         assert.deepStrictEqual(status.saved, {width:1344,height:2080});
         assert.strictEqual(status.current.density, 480);
+        assert.strictEqual(device.restarts, 1);
         assert.strictEqual(device.commands.some(c => c.startsWith('wm density ')), false);
         const file = path.join(dir, (await fs.readdir(dir))[0]);
         assert.strictEqual((await fs.stat(file)).mode & 0o777, 0o600);

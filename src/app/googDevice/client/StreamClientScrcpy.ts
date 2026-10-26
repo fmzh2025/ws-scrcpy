@@ -69,6 +69,7 @@ export class StreamClientScrcpy
     private adbOverlay?: AdbOverlay;
     private touchDiagnostics?: TouchDiagnostics;
     private mobileView?: MobileStreamView;
+    private changingDisplay = false;
     private readonly streamReceiver: StreamReceiverScrcpy;
 
     public static registerPlayer(playerClass: PlayerClass): void {
@@ -262,6 +263,12 @@ export class StreamClientScrcpy
     };
 
     public onDisconnected = (): void => {
+        if (this.changingDisplay) {
+            // The display-profile request deliberately rebuilds the old fork's
+            // encoder. Keep its HTTP request and menu alive until it responds.
+            this.player?.pause();
+            return;
+        }
         this.streamReceiver.off('deviceMessage', this.OnDeviceMessage);
         this.streamReceiver.off('video', this.onVideo);
         this.streamReceiver.off('clientsStats', this.onClientsStats);
@@ -373,7 +380,8 @@ export class StreamClientScrcpy
         document.body.appendChild(deviceView);
         if (mobile) {
             this.mobileView = new MobileStreamView(player, deviceView, video, this.controlButtons, moreBox,
-                udid, (suspended) => this.touchHandler?.setSuspended(suspended));
+                udid, (suspended) => this.touchHandler?.setSuspended(suspended),
+                (changing) => { this.changingDisplay = changing; });
         }
         this.touchDiagnostics = TouchDiagnostics.create(player.getTouchableElement(), moreBox, player.getName());
         document.addEventListener('paste', this.onPagePaste, true);

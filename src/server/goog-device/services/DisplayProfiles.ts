@@ -7,6 +7,7 @@ import { calculateDisplaySize, DisplayProfileStatus, DisplaySize, DisplayState }
 interface DisplayDevice {
     udid: string;
     runShellCommandAdbKit(command: string): Promise<string>;
+    restartDisplayStream(): Promise<void>;
 }
 
 interface SavedProfile {
@@ -160,12 +161,14 @@ export class DisplayProfiles {
             if (!previous) await this.store(record);
             try {
                 const current = await this.applyState(device, { ...before, override: saved });
+                await device.restartDisplayStream();
                 const updatedAt = new Date().toISOString();
                 await this.store({ ...record, saved, viewport, updatedAt });
                 return { current, saved, viewport, updatedAt };
             } catch (error) {
                 try {
                     await this.applyState(device, before);
+                    await device.restartDisplayStream();
                 } catch (_) {
                     throw new Error('适配失败，自动恢复也未成功，请使用“恢复原始屏幕”');
                 }
@@ -181,10 +184,12 @@ export class DisplayProfiles {
             const before = await this.read(device);
             try {
                 const current = await this.applyState(device, record.original);
+                await device.restartDisplayStream();
                 await fs.unlink(this.file(device.udid));
                 return { current };
             } catch (error) {
                 await this.applyState(device, before);
+                await device.restartDisplayStream();
                 throw error;
             }
         });
@@ -196,6 +201,7 @@ export class DisplayProfiles {
             if (!record?.saved) return;
             const before = await this.read(device);
             await this.applyState(device, { ...before, override: record.saved });
+            await device.restartDisplayStream();
         });
     }
 }
