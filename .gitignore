@@ -11,3 +11,6 @@
 
 # Manual snapshots kept only for local rollback
 *.before-*
+/.silkpulse.public.local.json
+/.env.local
+/.env.*.local

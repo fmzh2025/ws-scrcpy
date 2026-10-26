@@ -10,6 +10,7 @@ import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import { AndroidVpnStatus } from '../../types/NetworkRouteStatus';
 import { ScrcpyServer } from './ScrcpyServer';
 import { Properties } from './Properties';
+import { DisplayProfiles } from './services/DisplayProfiles';
 import Timeout = NodeJS.Timeout;
 
 enum PID_DETECTION {
@@ -108,7 +109,15 @@ export class Device extends TypedEmitter<DeviceEvents> {
         }
         this.descriptor.state = state;
         this.emitUpdate();
-        this.fetchDeviceInfo();
+        if (this.connected) {
+            // Restore a saved display before starting/discovering the stream.
+            void DisplayProfiles.getInstance()
+                .reapply(this)
+                .catch((error: Error) => console.error(this.TAG, 'Display profile restore failed:', error.message))
+                .then(() => this.fetchDeviceInfo());
+        } else {
+            this.fetchDeviceInfo();
+        }
     }
 
     public isConnected(): boolean {
@@ -953,5 +962,19 @@ export class Device extends TypedEmitter<DeviceEvents> {
             console.error(this.TAG, `Error: ${error.message}`);
             throw error;
         }
+    }
+
+    public async restartDisplayStream(): Promise<void> {
+        const pids = await ScrcpyServer.getServerPid(this);
+        for (const pid of pids || []) await this.killProcess(pid);
+        for (let attempt = 0; attempt < 30; attempt++) {
+            const remaining = await ScrcpyServer.getServerPid(this);
+            if (!remaining?.length) {
+                if (await this.startServer()) return;
+                throw new Error('云手机串流未能重新启动');
+            }
+            await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        throw new Error('旧串流进程尚未退出');
     }
 }

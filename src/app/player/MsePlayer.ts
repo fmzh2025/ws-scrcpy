@@ -35,8 +35,12 @@ export class MsePlayer extends BasePlayer {
         const tag = document.createElement('video') as HTMLVideoElement;
         tag.muted = true;
         tag.autoplay = true;
+        // Keep Safari playback inside the page so the touch canvas stays above it.
+        tag.playsInline = true;
         tag.setAttribute('muted', 'muted');
         tag.setAttribute('autoplay', 'autoplay');
+        tag.setAttribute('playsinline', '');
+        tag.setAttribute('webkit-playsinline', '');
         if (typeof id === 'string') {
             tag.id = id;
         }
@@ -255,6 +259,14 @@ export class MsePlayer extends BasePlayer {
 
     public getPreferredVideoSetting(): VideoSettings {
         return MsePlayer.preferredVideoSettings;
+    }
+
+    public getPresentedFrameSize(): Size | undefined {
+        const video = this.tag;
+        if (video.readyState >= 2 && !video.error && video.videoWidth > 0 && video.videoHeight > 0) {
+            return new Size(video.videoWidth, video.videoHeight);
+        }
+        return undefined;
     }
 
     checkVideoResize = (): void => {

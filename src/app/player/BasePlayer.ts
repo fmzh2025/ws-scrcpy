@@ -60,6 +60,8 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
     };
     private static STATS_HEIGHT = 12;
     protected screenInfo?: ScreenInfo;
+    private streamScreenInfo?: ScreenInfo;
+    private presentedFrameSize?: Size;
     protected videoSettings: VideoSettings;
     protected parentElement?: HTMLElement;
     protected touchableCanvas: HTMLCanvasElement;
@@ -342,6 +344,7 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
 
     public stop(): void {
         this.state = BasePlayer.STATE.STOPPED;
+        this.presentedFrameSize = undefined;
     }
 
     public getState(): number {
@@ -401,7 +404,26 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
         return this.screenInfo;
     }
 
+    /** Server geometry is independent of a decoder's canvas presentation size. */
+    public getStreamScreenInfo(): ScreenInfo | undefined {
+        return this.streamScreenInfo;
+    }
+
+    public setStreamScreenInfo(screenInfo: ScreenInfo): void {
+        this.streamScreenInfo = screenInfo;
+        this.setScreenInfo(screenInfo);
+    }
+
+    public getPresentedFrameSize(): Size | undefined {
+        return this.presentedFrameSize;
+    }
+
+    protected markFramePresented(width: number, height: number): void {
+        this.presentedFrameSize = new Size(width, height);
+    }
+
     public setScreenInfo(screenInfo: ScreenInfo): void {
+        this.presentedFrameSize = undefined;
         if (this.needScreenInfoBeforePlay()) {
             this.pause();
         }

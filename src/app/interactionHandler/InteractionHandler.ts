@@ -97,8 +97,20 @@ export abstract class InteractionHandler {
     protected abstract onInteraction(event: MouseEvent | TouchEvent): void;
     protected abstract onKey(event: KeyboardEvent): void;
 
+    private onDirectTouch = (event: Event): void => {
+        this.onInteraction(event as TouchEvent);
+    };
+
     protected static bindGlobalListeners(interactionHandler: InteractionHandler): void {
         interactionHandler.touchEventsNames.forEach((eventName) => {
+            if (eventName.startsWith('touch')) {
+                interactionHandler.tag.addEventListener(
+                    eventName,
+                    interactionHandler.onDirectTouch,
+                    InteractionHandler.options,
+                );
+                return;
+            }
             let set: Set<InteractionHandler> | undefined = InteractionHandler.eventListeners.get(eventName);
             if (!set) {
                 set = new Set();
@@ -120,6 +132,10 @@ export abstract class InteractionHandler {
 
     protected static unbindListeners(touchHandler: InteractionHandler): void {
         touchHandler.touchEventsNames.forEach((eventName) => {
+            if (eventName.startsWith('touch')) {
+                touchHandler.tag.removeEventListener(eventName, touchHandler.onDirectTouch, false);
+                return;
+            }
             const set = InteractionHandler.eventListeners.get(eventName);
             if (!set) {
                 return;
@@ -206,6 +222,12 @@ export abstract class InteractionHandler {
         return pointerId;
     }
 
+    protected static releasePointer(pointerId: number): void {
+        const identifier = this.pointerToIdMap.get(pointerId);
+        if (identifier !== undefined) this.idToPointerMap.delete(identifier);
+        this.pointerToIdMap.delete(pointerId);
+    }
+
     protected static buildTouchOnClient(event: CommonTouchAndMouse, screenInfo: ScreenInfo): TouchOnClient | null {
         const action = this.mapTypeToAction(event.type);
         const { width, height } = screenInfo.videoSize;
@@ -222,7 +244,10 @@ export abstract class InteractionHandler {
         const ratio = width / height;
         const shouldBe = Math.round(eps * ratio);
         const haveNow = Math.round((eps * clientWidth) / clientHeight);
-        if (shouldBe > haveNow) {
+        // A stretched mobile picture uses independent X/Y scales. Letterbox
+        // compensation is only correct for a presentation that keeps its ratio.
+        const keepAspectRatio = target.dataset?.videoFit !== 'fill';
+        if (keepAspectRatio && shouldBe > haveNow) {
             const realHeight = Math.ceil(clientWidth / ratio);
             const top = (clientHeight - realHeight) / 2;
             if (touchY < top || touchY > top + realHeight) {
@@ -230,7 +255,7 @@ export abstract class InteractionHandler {
             }
             touchY -= top;
             clientHeight = realHeight;
-        } else if (shouldBe < haveNow) {
+        } else if (keepAspectRatio && shouldBe < haveNow) {
             const realWidth = Math.ceil(clientHeight * ratio);
             const left = (clientWidth - realWidth) / 2;
             if (touchX < left || touchX > left + realWidth) {
@@ -288,7 +313,7 @@ export abstract class InteractionHandler {
             if (!previous) {
                 if (
                     (originalEvent instanceof MouseEvent && originalEvent.buttons) ||
-                    (window['TouchEvent'] && originalEvent instanceof TouchEvent)
+                    'changedTouches' in originalEvent
                 ) {
                     console.warn(logPrefix, 'Received ACTION_MOVE while there are no DOWN stored');
                     const emulated = InteractionHandler.createEmulatedMessage(MotionEvent.ACTION_DOWN, message);

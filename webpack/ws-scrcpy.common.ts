@@ -6,6 +6,7 @@ import MiniCssExtractPlugin from 'mini-css-extract-plugin';
 import HtmlWebpackPlugin from 'html-webpack-plugin';
 import GeneratePackageJsonPlugin from '@dead50f7/generate-package-json-webpack-plugin';
 import { mergeWithDefaultConfig } from './build.config.utils';
+import { createSilkPulseAssets } from './silkpulse';
 
 export const PROJECT_ROOT = path.resolve(__dirname, '..');
 export const SERVER_DIST_PATH = path.join(PROJECT_ROOT, 'dist');
@@ -15,7 +16,7 @@ const PACKAGE_JSON = path.join(PROJECT_ROOT, 'package.json');
 const override = path.join(PROJECT_ROOT, '/build.config.override.json');
 const buildConfigOptions = mergeWithDefaultConfig(override);
 const buildConfigDefinePlugin = new webpack.DefinePlugin({
-    '__PATHNAME__': JSON.stringify(buildConfigOptions.PATHNAME),
+    __PATHNAME__: JSON.stringify(buildConfigOptions.PATHNAME),
 });
 
 export const common = () => {
@@ -94,13 +95,29 @@ export const common = () => {
     };
 };
 
+const silkpulse = createSilkPulseAssets(PROJECT_ROOT);
+const silkpulseParameters = { silkpulseBootstrap: silkpulse.bootstrapFile, silkpulseCheck: silkpulse.checkFile };
 const front: webpack.Configuration = {
     entry: path.join(PROJECT_ROOT, './src/app/index.ts'),
     externals: ['fs'],
     plugins: [
+        silkpulse.plugin,
         new HtmlWebpackPlugin({
             template: path.join(PROJECT_ROOT, '/src/public/index.html'),
             inject: 'head',
+            templateParameters: silkpulseParameters,
+        }),
+        new HtmlWebpackPlugin({
+            template: path.join(PROJECT_ROOT, '/src/public/iphone-touch.html'),
+            filename: 'iphone-touch.html',
+            inject: false,
+            templateParameters: silkpulseParameters,
+        }),
+        new HtmlWebpackPlugin({
+            template: path.join(PROJECT_ROOT, '/src/public/silkpulse-check.html'),
+            filename: 'silkpulse-check.html',
+            inject: false,
+            templateParameters: silkpulseParameters,
         }),
         new MiniCssExtractPlugin(),
         new webpack.ProvidePlugin({
@@ -139,10 +156,7 @@ delete packageJson.devDependencies;
 const back: webpack.Configuration = {
     entry: path.join(PROJECT_ROOT, './src/server/index.ts'),
     externals: [nodeExternals()],
-    plugins: [
-        new GeneratePackageJsonPlugin(basePackage),
-        buildConfigDefinePlugin,
-    ],
+    plugins: [new GeneratePackageJsonPlugin(basePackage), buildConfigDefinePlugin],
     node: {
         global: false,
         __filename: false,

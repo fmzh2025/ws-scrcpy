@@ -34,6 +34,8 @@ import { InlineKeyboardOverlay } from '../InlineKeyboardOverlay';
 import { AdbOverlay } from './AdbOverlay';
 import { NetworkControlPanel } from './NetworkControlPanel';
 import { DeviceState } from '../../../common/DeviceState';
+import { TouchDiagnostics } from '../../interactionHandler/TouchDiagnostics';
+import { MobileStreamView } from './MobileStreamView';
 
 type StartParams = {
     udid: string;
@@ -68,6 +70,9 @@ export class StreamClientScrcpy
     private inlineKeyboard?: InlineKeyboardOverlay;
     private adbOverlay?: AdbOverlay;
     private networkPanel?: NetworkControlPanel;
+    private touchDiagnostics?: TouchDiagnostics;
+    private mobileView?: MobileStreamView;
+    private changingDisplay = false;
     private readonly streamReceiver: StreamReceiverScrcpy;
 
     public static registerPlayer(playerClass: PlayerClass): void {
@@ -231,9 +236,9 @@ export class StreamClientScrcpy
 
         this.clientsCount = info.connectionCount;
         let min = VideoSettings.copy(videoSettings);
-        const oldInfo = this.player.getScreenInfo();
+        const oldInfo = this.player.getStreamScreenInfo();
         if (!screenInfo.equals(oldInfo)) {
-            this.player.setScreenInfo(screenInfo);
+            this.player.setStreamScreenInfo(screenInfo);
         }
 
         if (!videoSettings.equals(currentSettings)) {
@@ -244,7 +249,9 @@ export class StreamClientScrcpy
             const videoSize: Size = screenInfo.videoSize;
             const onlyOneClient = this.clientsCount === 0;
             const smallerThenCurrent = bounds && (bounds.width < videoSize.width || bounds.height < videoSize.height);
-            if (onlyOneClient || smallerThenCurrent) {
+            if (onlyOneClient || smallerThenCurrent || this.mobileView) {
+                // Mobile explicitly requests a readable source when joining, even if
+                // the existing shared stream was started at a desktop thumbnail size.
                 min = currentSettings;
             }
             const minBounds = currentSettings.bounds?.intersect(min.bounds);
@@ -259,8 +266,14 @@ export class StreamClientScrcpy
     };
 
     public onDisconnected = (): void => {
-        // Keep controls and listeners alive while StreamReceiver reconnects.
         this.joinedStream = false;
+        if (this.changingDisplay) {
+            // Display-profile changes deliberately rebuild the encoder. Keep the
+            // controls alive while the page waits for the replacement stream.
+            this.player?.pause();
+            return;
+        }
+        // Keep controls and listeners alive while StreamReceiver reconnects.
         console.warn(TAG, 'Stream disconnected; waiting for transport reconnect');
     };
 
@@ -288,10 +301,17 @@ export class StreamClientScrcpy
             player = p;
         }
         this.player = player;
+        const mobile = MobileStreamView.isEnabled();
+        if (mobile) {
+            this.fitToScreen = fitToScreen = false;
+        }
         this.setTouchListeners(player);
 
         if (!videoSettings) {
             videoSettings = player.getVideoSettings();
+        }
+        if (mobile) {
+            videoSettings = MobileStreamView.createVideoSettings(videoSettings);
         }
 
         const deviceView = document.createElement('div');
@@ -321,6 +341,10 @@ export class StreamClientScrcpy
             this.adbOverlay = undefined;
             this.networkPanel?.release();
             this.networkPanel = undefined;
+            this.touchDiagnostics?.release();
+            this.touchDiagnostics = undefined;
+            this.mobileView?.release();
+            this.mobileView = undefined;
             this.removePagePasteHandler();
         };
 
@@ -339,10 +363,27 @@ export class StreamClientScrcpy
         deviceView.appendChild(video);
         deviceView.appendChild(moreBox);
         player.setParent(video);
-        this.addVideoResizeHandle(video);
+        if (!mobile) {
+            this.addVideoResizeHandle(video);
+        }
         player.pause();
 
         document.body.appendChild(deviceView);
+        if (mobile) {
+            this.mobileView = new MobileStreamView(
+                player,
+                deviceView,
+                video,
+                this.controlButtons,
+                moreBox,
+                udid,
+                (suspended) => this.touchHandler?.setSuspended(suspended),
+                (changing) => {
+                    this.changingDisplay = changing;
+                },
+            );
+        }
+        this.touchDiagnostics = TouchDiagnostics.create(player.getTouchableElement(), moreBox, player.getName());
         document.addEventListener('paste', this.onPagePaste, true);
         if (fitToScreen) {
             const newBounds = this.getMaxSize();

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>云手机</title>
+    <script src="./<%= silkpulseBootstrap %>"></script>
+    <style>
+        body { max-width: 32rem; margin: 10vh auto; padding: 1.5rem; font: 17px/1.7 system-ui, sans-serif; }
+        h1 { font-size: 1.5rem; }
+        a { display: block; padding: .8rem; margin: 1.5rem 0; border-radius: .6rem; background: #1769d2; color: white; text-align: center; text-decoration: none; }
+        a[aria-disabled="true"] { pointer-events: none; opacity: .5; }
+        small { overflow-wrap: anywhere; }
+    </style>
+</head>
+<body>
+    <h1>云手机</h1>
+    <p>页面版本：<strong>iPhone-v7-20261026</strong></p>
+    <p id="status">正在检查浏览器支持。</p>
+    <a id="start" aria-disabled="true">进入云手机</a>
+    <p>手机画面自动适配可用屏幕。点右下角“⋯”展开控制栏，再点栏内“⋯”打开设置。</p>
+    <p>需要查看触控计数时，可在设置里启用“触控诊断”。</p>
+    <small>Safari 地址栏由浏览器管理；云手机画面按比例完整显示。</small>
+    <script>
+        (function () {
+            var webcodecs = typeof VideoDecoder === 'function' && typeof VideoDecoder.isConfigSupported === 'function';
+            var mse = typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E"');
+            var status = document.getElementById('status');
+            if (!webcodecs && !mse) {
+                status.textContent = '当前浏览器没有提供此页面所需的播放接口。请回复这条提示，继续定位。';
+                return;
+            }
+            var url = new URL('./', location.href);
+            url.searchParams.set('v', 'iphone-v7-20261026');
+            url.hash = '!' + new URLSearchParams({action: 'stream', udid: 'emulator-5554', player: webcodecs ? 'webcodecs' : 'mse'}).toString();
+            var start = document.getElementById('start');
+            start.href = url.toString();
+            start.removeAttribute('aria-disabled');
+            status.textContent = '准备就绪，点下方按钮进入测试。';
+        })();
+    </script>
+</body>
+</html>

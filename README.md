@@ -39,6 +39,14 @@ npm install
 npm start
 ```
 
+## H5 remote debugging
+
+See [SilkPulse integration](docs/silkpulse.md) for configuration, session switches, iPhone verification and AI diagnostics. Production debugging is disabled by default.
+
+## Mobile display
+
+Mobile streams always preserve their aspect ratio. Open the floating controls, choose **More → 适配当前手机** in portrait with the keyboard closed. Android's logical display height is adjusted to the current Safari area while its width and DPI are preserved. The server saves this device's default; click again when changing phones. **恢复原始屏幕** restores the configuration captured before the first adaptation. All viewers of that cloud phone share its display. Browser toolbar/keyboard changes only scale the picture and may leave black bars. See [mobile display profiles](docs/mobile-display.md) for persistence, verification and recovery.
+
 ## Supported features
 
 ### Android
