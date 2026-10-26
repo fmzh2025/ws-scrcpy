@@ -28,7 +28,13 @@ export type NetworkGuardResult = {
     enabled: boolean;
     supported: boolean;
     protectedPackages: number;
+    allowedProxy?: string;
     error?: string;
+};
+
+export type NetworkGuardState = {
+    enabled: boolean;
+    allowedProxy?: string;
 };
 
 type ThirdPartyPackage = {
@@ -245,16 +251,17 @@ export class Device extends TypedEmitter<DeviceEvents> {
         }
     }
 
-    public async getExternalNetworkStatus(): Promise<string> {
+    public async getExternalNetworkStatus(proxy?: string): Promise<string> {
         if (!this.connected) {
             throw new Error(`Device "${this.udid}" is not connected`);
         }
         await this.ensureIpProbe();
         const target = `${Device.IP_PROBE_URL}?_ws_scrcpy=${Date.now()}`;
+        const proxyArgument = proxy && proxy !== ':0' ? ` ${Device.shellQuote(proxy)}` : '';
         const output = await this.runShellCommandAdbKit(
             `CLASSPATH=${Device.shellQuote(Device.IP_PROBE_REMOTE_PATH)} app_process / IpProbe ${Device.shellQuote(
                 target,
-            )}`,
+            )}${proxyArgument}`,
         );
         const match = output.match(/^(\d{3})\t([\s\S]*)$/);
         if (!match) {
@@ -336,13 +343,18 @@ export class Device extends TypedEmitter<DeviceEvents> {
         return { proxy: applied, stoppedPackages };
     }
 
-    public async setNetworkGuard(enabled: boolean, excludedPackages: string[] = []): Promise<NetworkGuardResult> {
+    public async setNetworkGuard(
+        enabled: boolean,
+        excludedPackages: string[] = [],
+        allowedProxy?: string,
+    ): Promise<NetworkGuardResult> {
         if (!this.connected) {
             throw new Error(`Device "${this.udid}" is not connected`);
         }
         const chain = 'WS_SCRCPY_GUARD';
+        const proxySetting = 'ws_scrcpy_guard_proxy';
         const cleanup = (binary: string): string =>
-            `${binary} -D OUTPUT -j ${chain} 2>/dev/null || true; ` +
+            `while ${binary} -D OUTPUT -j ${chain} 2>/dev/null; do :; done; ` +
             `${binary} -F ${chain} 2>/dev/null || true; ${binary} -X ${chain} 2>/dev/null || true`;
         const packages = await this.listThirdPartyPackages();
         const excluded = new Set(excludedPackages);
@@ -356,9 +368,30 @@ export class Device extends TypedEmitter<DeviceEvents> {
         const commands = [
             cleanup('iptables'),
             'command -v ip6tables >/dev/null 2>&1 && { ' + cleanup('ip6tables') + '; }',
+            `settings delete global ${proxySetting} >/dev/null 2>&1 || true`,
         ];
+        let allowedProxyAddress: string | undefined;
+        let allowedProxyPort: number | undefined;
+        if (allowedProxy) {
+            const match = allowedProxy.match(/^(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})$/);
+            const octets = match ? match[1].split('.').map((part) => parseInt(part, 10)) : [];
+            const port = match ? parseInt(match[2], 10) : NaN;
+            if (!match || octets.some((octet) => octet < 0 || octet > 255) || port < 1 || port > 65_535) {
+                throw new Error(`Invalid network guard proxy: ${allowedProxy}`);
+            }
+            allowedProxyAddress = match[1];
+            allowedProxyPort = port;
+        }
         if (enabled) {
-            const rules = protectedUids.map((uid) => `iptables -A ${chain} -m owner --uid-owner ${uid} -j REJECT`);
+            const rules: string[] = [];
+            protectedUids.forEach((uid) => {
+                if (allowedProxyAddress && allowedProxyPort) {
+                    rules.push(
+                        `iptables -A ${chain} -p tcp -d ${allowedProxyAddress} --dport ${allowedProxyPort} -m owner --uid-owner ${uid} -j RETURN`,
+                    );
+                }
+                rules.push(`iptables -A ${chain} -m owner --uid-owner ${uid} -j REJECT`);
+            });
             const rulesV6 = protectedUids.map((uid) => `ip6tables -A ${chain} -m owner --uid-owner ${uid} -j REJECT`);
             const ip6Rules = rulesV6.length ? `${rulesV6.join('; ')}; ` : '';
             commands.push(
@@ -367,6 +400,9 @@ export class Device extends TypedEmitter<DeviceEvents> {
                 `iptables -I OUTPUT 1 -j ${chain}`,
                 `command -v ip6tables >/dev/null 2>&1 && { ip6tables -N ${chain}; ${ip6Rules}ip6tables -I OUTPUT 1 -j ${chain}; }`,
             );
+            if (allowedProxy) {
+                commands.push(`settings put global ${proxySetting} ${Device.shellQuote(allowedProxy)}`);
+            }
         }
         commands.push('echo __WS_SCRCPY_GUARD_OK__');
         try {
@@ -378,6 +414,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
                 enabled,
                 supported: true,
                 protectedPackages: packages.filter(({ name }) => !excluded.has(name)).length,
+                allowedProxy: enabled ? allowedProxy : undefined,
             };
         } catch (error: unknown) {
             return {
@@ -390,18 +427,37 @@ export class Device extends TypedEmitter<DeviceEvents> {
     }
 
     public async isNetworkGuardEnabled(): Promise<boolean> {
+        return (await this.getNetworkGuardState()).enabled;
+    }
+
+    public async getNetworkGuardState(): Promise<NetworkGuardState> {
         if (!this.connected) {
-            return false;
+            return { enabled: false };
         }
         try {
-            const output = await this.runShellCommandAdbKit(
-                `su 0 sh -c ${Device.shellQuote(
-                    'iptables -C OUTPUT -j WS_SCRCPY_GUARD >/dev/null 2>&1 && echo active || echo inactive',
-                )}`,
-            );
-            return output.trim() === 'active';
+            const chain = 'WS_SCRCPY_GUARD';
+            const proxySetting = 'ws_scrcpy_guard_proxy';
+            const [chainRules, outputRules, proxyMarker] = await Promise.all([
+                this.runShellCommandAdbKit(`su 0 iptables -S ${chain} 2>/dev/null`),
+                this.runShellCommandAdbKit('su 0 iptables -S OUTPUT 2>/dev/null'),
+                this.runShellCommandAdbKit(`settings get global ${proxySetting}`),
+            ]);
+            const hooked = outputRules.split('\n').some((line) => line.trim() === `-A OUTPUT -j ${chain}`);
+            if (!hooked) {
+                return { enabled: false };
+            }
+            const proxyLine = chainRules
+                .split('\n')
+                .find((line) => line.includes('--dport') && line.includes('-j RETURN'));
+            const proxyAddress = proxyLine?.match(/-d (\d{1,3}(?:\.\d{1,3}){3})(?:\/32)?\b/)?.[1];
+            const proxyPort = proxyLine?.match(/--dport (\d+)\b/)?.[1];
+            const markedProxy = /^(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})$/.test(proxyMarker) ? proxyMarker : undefined;
+            return {
+                enabled: true,
+                allowedProxy: markedProxy || (proxyAddress && proxyPort ? `${proxyAddress}:${proxyPort}` : undefined),
+            };
         } catch (_error) {
-            return false;
+            return { enabled: false };
         }
     }
 

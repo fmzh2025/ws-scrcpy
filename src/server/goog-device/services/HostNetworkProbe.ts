@@ -3,10 +3,17 @@ import * as http from 'http';
 import * as https from 'https';
 import * as net from 'net';
 import * as process from 'process';
-import { ExternalNetworkStatus, HostSystemProxyStatus, HostVpnStatus } from '../../../types/NetworkRouteStatus';
+import {
+    ExternalNetworkStatus,
+    HostDirectStatus,
+    HostSystemProxyStatus,
+    HostVpnStatus,
+} from '../../../types/NetworkRouteStatus';
+import { HostDirectProxy } from './HostDirectProxy';
 
 type HostNetworkSnapshot = {
     hostDefault: ExternalNetworkStatus;
+    hostDirect: HostDirectStatus;
     hostVpn: HostVpnStatus;
 };
 
@@ -86,7 +93,7 @@ export function parseIpWhoIsResponse(body: string, source: string): ExternalNetw
     };
 }
 
-function requestExternalNetworkStatus(proxy?: ProxyEndpoint): Promise<ExternalNetworkStatus> {
+function requestExternalNetworkStatus(proxy?: ProxyEndpoint, source?: string): Promise<ExternalNetworkStatus> {
     const requestUrl = `http://ipwho.is/?_ws_scrcpy=${Date.now()}`;
     return new Promise((resolve, reject) => {
         const handleResponse = (response: http.IncomingMessage): void => {
@@ -98,7 +105,9 @@ function requestExternalNetworkStatus(proxy?: ProxyEndpoint): Promise<ExternalNe
                     if (response.statusCode !== 200) {
                         throw new Error(`External IP lookup failed (${response.statusCode || 'unknown'})`);
                     }
-                    resolve(parseIpWhoIsResponse(body, proxy ? 'Host VPN lookup' : 'Host default lookup'));
+                    resolve(
+                        parseIpWhoIsResponse(body, source || (proxy ? 'Host proxy lookup' : 'Host default lookup')),
+                    );
                 } catch (error) {
                     reject(error);
                 }
@@ -128,6 +137,7 @@ function requestExternalNetworkStatus(proxy?: ProxyEndpoint): Promise<ExternalNe
 export class HostNetworkProbe {
     private static instance?: HostNetworkProbe;
     private readonly relayPort: number;
+    private readonly directProxy = new HostDirectProxy();
     private relayServer?: net.Server;
     private relayError?: string;
     private cachedSnapshot?: CachedHostSnapshot;
@@ -154,11 +164,20 @@ export class HostNetworkProbe {
         return DEVICE_PROXY;
     }
 
+    public getDirectDeviceProxy(): string {
+        return this.directProxy.getDeviceProxy();
+    }
+
     public isRelayAvailable(): boolean {
         return !!this.relayServer?.listening && !this.relayError;
     }
 
+    public isDirectRelayAvailable(): boolean {
+        return this.directProxy.isAvailable();
+    }
+
     public startRelay(): void {
+        this.directProxy.start();
         if (!RELAY_ENABLED || this.relayServer) {
             return;
         }
@@ -177,6 +196,7 @@ export class HostNetworkProbe {
     public stopRelay(): void {
         this.relayServer?.close();
         this.relayServer = undefined;
+        this.directProxy.stop();
     }
 
     public async getSnapshot(force = false): Promise<HostNetworkSnapshot> {
@@ -198,7 +218,7 @@ export class HostNetworkProbe {
     }
 
     private async readSnapshot(): Promise<HostNetworkSnapshot> {
-        const [{ proxy: systemProxy, defaultInterface }, hostDefaultResult] = await Promise.all([
+        const [{ proxy: systemProxy, defaultInterface }, hostDefaultResult, physicalRoute] = await Promise.all([
             this.getSystemState(true),
             requestExternalNetworkStatus().catch(
                 (error: unknown): ExternalNetworkStatus => ({
@@ -206,6 +226,7 @@ export class HostNetworkProbe {
                     error: error instanceof Error ? error.message : 'Host default lookup failed',
                 }),
             ),
+            this.directProxy.getPhysicalRoute(true),
         ]);
         const tunnelActive = !!defaultInterface && /^(?:utun|tun|tap|wg|ppp|tailscale|ipsec)/i.test(defaultInterface);
         const proxyEndpoint =
@@ -216,7 +237,7 @@ export class HostNetworkProbe {
         let proxyError: string | undefined;
         if (proxyEndpoint) {
             try {
-                proxyNetwork = await requestExternalNetworkStatus(proxyEndpoint);
+                proxyNetwork = await requestExternalNetworkStatus(proxyEndpoint, 'Host VPN lookup');
             } catch (error: unknown) {
                 proxyError = error instanceof Error ? error.message : 'Host VPN proxy lookup failed';
             }
@@ -241,8 +262,32 @@ export class HostNetworkProbe {
         const error = active
             ? proxyError
             : proxyError || this.relayError || 'No active host VPN tunnel or reachable system proxy was detected';
+        let hostDirectNetwork: ExternalNetworkStatus = {
+            checkedAt: Date.now(),
+            error: this.directProxy.getError() || 'Host direct relay is unavailable',
+        };
+        if (this.directProxy.isAvailable() && physicalRoute) {
+            hostDirectNetwork = await requestExternalNetworkStatus(
+                this.directProxy.getProbeProxy(),
+                'Host direct lookup',
+            ).catch(
+                (directError: unknown): ExternalNetworkStatus => ({
+                    checkedAt: Date.now(),
+                    error: directError instanceof Error ? directError.message : 'Host direct lookup failed',
+                }),
+            );
+        }
+        const hostDirect: HostDirectStatus = {
+            ...hostDirectNetwork,
+            available: !!hostDirectNetwork.ip && !!physicalRoute && this.directProxy.isAvailable(),
+            relayAvailable: this.directProxy.isAvailable(),
+            deviceProxy: this.directProxy.getDeviceProxy(),
+            interfaceName: physicalRoute?.interfaceName,
+            gateway: physicalRoute?.gateway,
+        };
         return {
             hostDefault: hostDefaultResult,
+            hostDirect,
             hostVpn: {
                 ...(hostVpnNetwork || { checkedAt: Date.now() }),
                 active,

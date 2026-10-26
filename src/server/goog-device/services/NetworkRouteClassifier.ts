@@ -1,6 +1,7 @@
 import {
     AndroidVpnStatus,
     ExternalNetworkStatus,
+    HostDirectStatus,
     HostVpnStatus,
     NetworkRouteConfidence,
     NetworkRouteKind,
@@ -17,6 +18,7 @@ export type NetworkRouteEvidence = {
     androidProxy: string;
     androidVpn: AndroidVpnStatus;
     hostDefault: ExternalNetworkStatus;
+    hostDirect: HostDirectStatus;
     hostVpn: HostVpnStatus;
 };
 
@@ -25,7 +27,7 @@ function sameIp(first?: string, second?: string): boolean {
 }
 
 export function classifyNetworkRoute(evidence: NetworkRouteEvidence): NetworkRouteClassification {
-    const { actualIp, androidProxy, androidVpn, hostDefault, hostVpn } = evidence;
+    const { actualIp, androidProxy, androidVpn, hostDefault, hostDirect, hostVpn } = evidence;
 
     if (androidVpn.active && androidVpn.isDefault) {
         return {
@@ -55,6 +57,14 @@ export function classifyNetworkRoute(evidence: NetworkRouteEvidence): NetworkRou
         };
     }
 
+    if (hostDirect.available && sameIp(actualIp, hostDirect.ip) && !sameIp(actualIp, hostVpn.ip)) {
+        return {
+            route: 'host-direct',
+            confidence: 'verified',
+            reason: 'The emulator exit IP matches the host physical-network exit measured through the direct relay',
+        };
+    }
+
     if (hostVpn.active && hostVpn.tunnelActive && sameIp(actualIp, hostDefault.ip)) {
         return {
             route: 'host-vpn',
@@ -63,7 +73,7 @@ export function classifyNetworkRoute(evidence: NetworkRouteEvidence): NetworkRou
         };
     }
 
-    if (sameIp(actualIp, hostDefault.ip)) {
+    if (!hostVpn.active && sameIp(actualIp, hostDefault.ip)) {
         return {
             route: 'host-direct',
             confidence: 'verified',

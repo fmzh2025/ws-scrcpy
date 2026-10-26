@@ -22,12 +22,26 @@ function hostVpn(overrides = {}) {
     };
 }
 
+function hostDirect(overrides = {}) {
+    return {
+        available: true,
+        relayAvailable: true,
+        deviceProxy: '10.0.2.2:7899',
+        interfaceName: 'en1',
+        gateway: '192.168.31.1',
+        ip: '198.51.100.10',
+        checkedAt: now,
+        ...overrides,
+    };
+}
+
 function classify(overrides = {}) {
     return classifyNetworkRoute({
         actualIp: '203.0.113.20',
         androidProxy: ':0',
         androidVpn: noAndroidVpn,
         hostDefault: { ip: '198.51.100.10', checkedAt: now },
+        hostDirect: hostDirect(),
         hostVpn: hostVpn(),
         ...overrides,
     });
@@ -82,10 +96,19 @@ assert.strictEqual(
 assert.strictEqual(
     classify({
         actualIp: '198.51.100.10',
+    }).route,
+    'host-direct',
+    'a physical-network match must be direct even while the host VPN is active',
+);
+
+assert.strictEqual(
+    classify({
+        actualIp: '198.51.100.10',
+        hostDirect: hostDirect({ available: false, ip: undefined }),
         hostVpn: hostVpn({ active: false, ip: undefined, tunnelActive: false, systemProxy: { enabled: false } }),
     }).route,
     'host-direct',
-    'matching host default without VPN evidence must be direct',
+    'matching host default without VPN evidence must remain a direct fallback',
 );
 
 assert.strictEqual(

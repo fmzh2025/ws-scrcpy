@@ -30,6 +30,14 @@ export type HostVpnStatus = ExternalNetworkStatus & {
     evidence: string[];
 };
 
+export type HostDirectStatus = ExternalNetworkStatus & {
+    available: boolean;
+    relayAvailable: boolean;
+    deviceProxy: string;
+    interfaceName?: string;
+    gateway?: string;
+};
+
 export type AndroidVpnStatus = {
     active: boolean;
     isDefault: boolean;
@@ -50,6 +58,8 @@ export type NetworkProtectionStatus = {
     lastChangedAt?: number;
     stoppedPackages?: number;
     message?: string;
+    guardMode?: 'block-all' | 'proxy-only';
+    allowedProxy?: string;
 };
 
 export type NetworkRouteChange = {
@@ -68,6 +78,7 @@ export type NetworkRouteStatus = ExternalNetworkStatus & {
     routeReason: string;
     androidProxy: string;
     hostDefault: ExternalNetworkStatus;
+    hostDirect: HostDirectStatus;
     hostVpn: HostVpnStatus;
     androidVpn: AndroidVpnStatus;
     protection: NetworkProtectionStatus;

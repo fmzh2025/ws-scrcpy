@@ -220,10 +220,17 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
         this.mainApp.post(NETWORK_PROXY_PATH, async (req, res) => {
             const { udid, action, mode } = req.body || {};
             const compatibilityAction =
-                mode === 'host-vpn' ? 'apply-host-vpn' : mode === 'clear' ? 'clear-android-proxy' : undefined;
+                mode === 'host-vpn'
+                    ? 'apply-host-vpn'
+                    : mode === 'host-direct'
+                    ? 'apply-host-direct'
+                    : mode === 'clear'
+                    ? 'clear-android-proxy'
+                    : undefined;
             const requestedAction = (action || compatibilityAction) as NetworkRouteAction | undefined;
             const supportedActions: NetworkRouteAction[] = [
                 'apply-host-vpn',
+                'apply-host-direct',
                 'lock-device-vpn',
                 'clear-android-proxy',
                 'lock-current',
