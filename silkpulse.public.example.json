@@ -1,0 +1,9 @@
+{
+  "server": "https://debug.foxhello.com",
+  "projectId": "",
+  "deviceToken": "",
+  "environment": "production",
+  "tags": ["ws-scrcpy", "cloudphone-h5"],
+  "testDeviceIds": [],
+  "sessionMinutes": 30
+}

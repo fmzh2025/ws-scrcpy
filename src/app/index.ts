@@ -4,7 +4,7 @@ import { RemoteKeyboardClientScrcpy } from './googDevice/client/RemoteKeyboardCl
 import { HostTracker } from './client/HostTracker';
 import { Tool } from './client/Tool';
 
-window.onload = async function (): Promise<void> {
+async function startApplication(): Promise<void> {
     const hash = location.hash.replace(/^#!/, '');
     const parsedQuery = new URLSearchParams(hash);
     const action = parsedQuery.get('action');
@@ -115,4 +115,19 @@ window.onload = async function (): Promise<void> {
         });
     }
     HostTracker.start();
-};
+}
+
+function startWhenReady(): void {
+    const ready = (window as Window & { __WS_SILKPULSE_READY__?: Promise<void> }).__WS_SILKPULSE_READY__;
+    // Bootstrap always settles, including SDK load failure or its bounded timeout.
+    // Do not depend on window.load, which third-party scripts can delay indefinitely.
+    void Promise.resolve(ready)
+        .catch(() => undefined)
+        .then(startApplication);
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startWhenReady, { once: true });
+} else {
+    startWhenReady();
+}

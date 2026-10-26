@@ -39,6 +39,10 @@ npm install
 npm start
 ```
 
+## H5 remote debugging
+
+See [SilkPulse integration](docs/silkpulse.md) for configuration, session switches, iPhone verification and AI diagnostics. Production debugging is disabled by default.
+
 ## Supported features
 
 ### Android

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://debug.foxhello.com; connect-src 'self' https://debug.foxhello.com wss://debug.foxhello.com; img-src 'self' data:; style-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+    <title>SilkPulse 连通验证</title>
+    <script src="./<%= silkpulseBootstrap %>"></script>
+    <script defer src="./<%= silkpulseCheck %>"></script>
+</head>
+<body>
+    <h1>SilkPulse 连通验证</h1>
+    <p id="silkpulse-status">正在读取本会话的调试状态。</p>
+    <p>本页使用禁止内联脚本及动态执行的严格 CSP。检查会产生明确标记的测试日志、只读请求及一个测试错误，不修改云手机。</p>
+    <button id="silkpulse-run" type="button">运行采集验证</button>
+    <button id="silkpulse-disable" type="button">关闭本会话调试</button>
+    <pre id="silkpulse-result"></pre>
+</body>
+</html>
