@@ -4,3 +4,10 @@
 /.idea
 /.appium-home
 /logs/
+
+# Local Codex task attachments, diagnostics, and build scratch files
+/.codex-manage/
+/.tmp/
+
+# Manual snapshots kept only for local rollback
+*.before-*
