@@ -272,6 +272,8 @@ export class StreamClientScrcpy
         this.inlineKeyboard = undefined;
         this.adbOverlay?.release();
         this.adbOverlay = undefined;
+        this.touchDiagnostics?.release();
+        this.touchDiagnostics = undefined;
         this.removePagePasteHandler();
     };
 
@@ -352,7 +354,7 @@ export class StreamClientScrcpy
         player.pause();
 
         document.body.appendChild(deviceView);
-        this.touchDiagnostics = TouchDiagnostics.create(player.getTouchableElement());
+        this.touchDiagnostics = TouchDiagnostics.create(player.getTouchableElement(), moreBox, player.getName());
         document.addEventListener('paste', this.onPagePaste, true);
         if (fitToScreen) {
             const newBounds = this.getMaxSize();

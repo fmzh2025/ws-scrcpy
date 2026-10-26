@@ -102,6 +102,11 @@ const front: webpack.Configuration = {
             template: path.join(PROJECT_ROOT, '/src/public/index.html'),
             inject: 'head',
         }),
+        new HtmlWebpackPlugin({
+            template: path.join(PROJECT_ROOT, '/src/public/iphone-touch.html'),
+            filename: 'iphone-touch.html',
+            inject: false,
+        }),
         new MiniCssExtractPlugin(),
         new webpack.ProvidePlugin({
             Buffer: ['buffer', 'Buffer'],

@@ -422,6 +422,20 @@ body.remote-keyboard {
     pointer-events: none;
 }
 
+.touch-diagnostics-menu {
+    margin: 0.5rem 0;
+    padding: 0.5rem;
+    border: 1px solid var(--button-border-color);
+    font: 12px/1.5 sans-serif;
+    overflow-wrap: anywhere;
+}
+
+.touch-diagnostics-menu pre {
+    margin: 0.5rem 0 0;
+    font: inherit;
+    white-space: pre-wrap;
+}
+
 .video {
     order: 1;
     position: relative;

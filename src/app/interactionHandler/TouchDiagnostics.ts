@@ -3,30 +3,68 @@ import { TouchControlMessage } from '../controlMessage/TouchControlMessage';
 
 const TOUCH_EVENTS = ['touchstart', 'touchmove', 'touchend', 'touchcancel'] as const;
 
-/** Optional on-device counters, enabled by touchDebug=1 in the stream URL. */
+/** On-device counters, enabled from the More menu or with touchDebug=1. */
 export class TouchDiagnostics {
     private static current?: TouchDiagnostics;
     private readonly element = document.createElement('div');
+    private readonly menuPanel = document.createElement('section');
+    private readonly menuOutput = document.createElement('pre');
+    private readonly enabledInput = document.createElement('input');
+    private enabled = false;
     private readonly counts = { touchstart: 0, touchmove: 0, touchend: 0, touchcancel: 0 };
     private generatedCount = 0;
     private sentCount = 0;
     private lastTarget = '-';
     private status = '等待触摸';
 
-    public static create(canvas: HTMLCanvasElement): TouchDiagnostics | undefined {
+    public static create(canvas: HTMLCanvasElement, menu: HTMLElement, playerName: string): TouchDiagnostics {
         const hash = new URLSearchParams(location.hash.replace(/^#!/, ''));
         const search = new URLSearchParams(location.search);
-        if (hash.get('touchDebug') !== '1' && search.get('touchDebug') !== '1') {
-            return;
-        }
         this.current?.release();
-        return (this.current = new TouchDiagnostics(canvas));
+        return (this.current = new TouchDiagnostics(
+            canvas,
+            menu,
+            playerName,
+            hash.get('touchDebug') === '1' || search.get('touchDebug') === '1',
+        ));
     }
 
-    private constructor(private readonly canvas: HTMLCanvasElement) {
+    private constructor(
+        private readonly canvas: HTMLCanvasElement,
+        menu: HTMLElement,
+        private readonly playerName: string,
+        enabled: boolean,
+    ) {
         this.element.className = 'touch-diagnostics';
-        document.body.appendChild(this.element);
-        TOUCH_EVENTS.forEach((name) => document.addEventListener(name, this.onTouch, { capture: true, passive: true }));
+        this.menuPanel.className = 'touch-diagnostics-menu';
+        const version = document.createElement('div');
+        version.textContent = '触控版本：iPhone-v2-20261026';
+        const label = document.createElement('label');
+        this.enabledInput.type = 'checkbox';
+        this.enabledInput.onchange = () => this.setEnabled(this.enabledInput.checked);
+        label.appendChild(this.enabledInput);
+        label.appendChild(document.createTextNode(' 启用触控诊断'));
+        this.menuPanel.appendChild(version);
+        this.menuPanel.appendChild(label);
+        this.menuPanel.appendChild(this.menuOutput);
+        menu.insertBefore(this.menuPanel, menu.children[1] || null);
+        this.setEnabled(enabled);
+    }
+
+    private setEnabled(enabled: boolean): void {
+        this.enabledInput.checked = enabled;
+        if (this.enabled !== enabled) {
+            this.enabled = enabled;
+            if (enabled) {
+                document.body.appendChild(this.element);
+                TOUCH_EVENTS.forEach((name) =>
+                    document.addEventListener(name, this.onTouch, { capture: true, passive: true }),
+                );
+            } else {
+                this.element.remove();
+                TOUCH_EVENTS.forEach((name) => document.removeEventListener(name, this.onTouch, true));
+            }
+        }
         this.render();
     }
 
@@ -42,7 +80,7 @@ export class TouchDiagnostics {
     };
 
     public static ignored(reason: string): void {
-        if (this.current) {
+        if (this.current?.enabled) {
             this.current.status = reason;
             this.current.render();
         }
@@ -50,7 +88,7 @@ export class TouchDiagnostics {
 
     public static generated(messages: ControlMessage[], eventType: string): void {
         const current = this.current;
-        if (!current) {
+        if (!current?.enabled) {
             return;
         }
         const touches = messages.filter(
@@ -70,7 +108,7 @@ export class TouchDiagnostics {
     }
 
     public static sent(message: ControlMessage, connected: boolean): void {
-        if (!this.current || message.type !== ControlMessage.TYPE_TOUCH) {
+        if (!this.current?.enabled || message.type !== ControlMessage.TYPE_TOUCH) {
             return;
         }
         if (connected) {
@@ -82,19 +120,27 @@ export class TouchDiagnostics {
     }
 
     private render(): void {
+        if (!this.enabled) {
+            this.menuOutput.textContent = '勾选后，关闭菜单并触摸云手机画面，再打开菜单查看计数。';
+            return;
+        }
         const { touchstart, touchmove, touchend, touchcancel } = this.counts;
-        this.element.textContent = [
-            '触控诊断 · iPhone-v1-20261026',
+        const text = [
+            '触控诊断 · iPhone-v2-20261026',
+            `播放器：${this.playerName}`,
             `收到：按 ${touchstart} 移 ${touchmove} 抬 ${touchend} 取消 ${touchcancel}`,
             `生成 ${this.generatedCount} / 已发 ${this.sentCount}`,
             `命中：${this.lastTarget}`,
             this.status,
         ].join('\n');
+        this.element.textContent = this.menuOutput.textContent = text;
     }
 
     public release(): void {
         TOUCH_EVENTS.forEach((name) => document.removeEventListener(name, this.onTouch, true));
         this.element.remove();
+        this.menuPanel.remove();
+        this.enabledInput.onchange = null;
         if (TouchDiagnostics.current === this) {
             TouchDiagnostics.current = undefined;
         }
