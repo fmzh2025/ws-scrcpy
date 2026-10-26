@@ -13,6 +13,7 @@ try {
         global.Buffer = impl;
         for (const [pressure, expected] of [
             [0, 0], [0.5, 32768], [1, 65535], [1.01, 65535], [1.5, 65535],
+            [24.277777958661318, 65535], // Reported by the user's iPhone Safari.
             [-0.1, 0], [NaN, 0], [Infinity, 0],
         ]) {
             // A failed DOWN with a valid UP reproduces the half-sent tap symptom.

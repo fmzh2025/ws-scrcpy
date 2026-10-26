@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
-    <title>手机触控检查</title>
+    <title>云手机</title>
     <style>
         body { max-width: 32rem; margin: 10vh auto; padding: 1.5rem; font: 17px/1.7 system-ui, sans-serif; }
         h1 { font-size: 1.5rem; }
@@ -14,13 +14,13 @@
     </style>
 </head>
 <body>
-    <h1>手机触控检查</h1>
-    <p>页面版本：<strong>iPhone-v3-20261026</strong></p>
+    <h1>云手机</h1>
+    <p>页面版本：<strong>iPhone-v4-20261026</strong></p>
     <p id="status">正在检查浏览器支持。</p>
-    <a id="start" aria-disabled="true">开始触控测试</a>
-    <p>进入云手机后，点右侧的“⋯”。菜单顶部应显示同一版本号和“启用触控诊断”。</p>
-    <p>关闭菜单，点一个应用，再打开菜单查看“收到、生成、已发”计数。</p>
-    <small>如果云手机菜单里没有版本号，请直接说明“检查页有版本，菜单无版本”。</small>
+    <a id="start" aria-disabled="true">进入云手机</a>
+    <p>手机画面自动适配可用屏幕。点右下角“⋯”展开控制栏，再点栏内“⋯”打开设置。</p>
+    <p>需要查看触控计数时，可在设置里启用“触控诊断”。</p>
+    <small>Safari 地址栏由浏览器管理；云手机画面按比例完整显示。</small>
     <script>
         (function () {
             var webcodecs = typeof VideoDecoder === 'function' && typeof VideoDecoder.isConfigSupported === 'function';
@@ -31,8 +31,7 @@
                 return;
             }
             var url = new URL('./', location.href);
-            url.searchParams.set('touchDebug', '1');
-            url.searchParams.set('v', 'iphone-v3-20261026');
+            url.searchParams.set('v', 'iphone-v4-20261026');
             url.hash = '!' + new URLSearchParams({action: 'stream', udid: 'emulator-5554', player: webcodecs ? 'webcodecs' : 'mse'}).toString();
             var start = document.getElementById('start');
             start.href = url.toString();
