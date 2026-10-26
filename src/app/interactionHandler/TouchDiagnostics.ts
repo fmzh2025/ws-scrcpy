@@ -14,6 +14,12 @@ export class TouchDiagnostics {
     private readonly counts = { touchstart: 0, touchmove: 0, touchend: 0, touchcancel: 0 };
     private generatedCount = 0;
     private sentCount = 0;
+    private failedCount = 0;
+    private readonly generatedActions = [0, 0, 0];
+    private readonly sentActions = [0, 0, 0];
+    private downPressure = '-';
+    private maxPressure = 0;
+    private lastError = '';
     private lastTarget = '-';
     private status = '等待触摸';
 
@@ -38,7 +44,7 @@ export class TouchDiagnostics {
         this.element.className = 'touch-diagnostics';
         this.menuPanel.className = 'touch-diagnostics-menu';
         const version = document.createElement('div');
-        version.textContent = '触控版本：iPhone-v2-20261026';
+        version.textContent = '触控版本：iPhone-v3-20261026';
         const label = document.createElement('label');
         this.enabledInput.type = 'checkbox';
         this.enabledInput.onchange = () => this.setEnabled(this.enabledInput.checked);
@@ -95,6 +101,17 @@ export class TouchDiagnostics {
             (message) => message.type === ControlMessage.TYPE_TOUCH,
         ) as TouchControlMessage[];
         current.generatedCount += touches.length;
+        touches.forEach((message) => {
+            if (message.action >= 0 && message.action < current.generatedActions.length) {
+                current.generatedActions[message.action]++;
+            }
+            if (message.action === 0) {
+                current.downPressure = String(message.pressure);
+                if (Number.isFinite(message.pressure)) {
+                    current.maxPressure = Math.max(current.maxPressure, message.pressure);
+                }
+            }
+        });
         if (touches.length) {
             const last = touches[touches.length - 1];
             const { point, screenSize } = last.position;
@@ -113,9 +130,24 @@ export class TouchDiagnostics {
         }
         if (connected) {
             this.current.sentCount++;
+            const action = (message as TouchControlMessage).action;
+            if (action >= 0 && action < this.current.sentActions.length) {
+                this.current.sentActions[action]++;
+            }
         } else {
             this.current.status = '连接未就绪，消息已排队';
         }
+        this.current.render();
+    }
+
+    public static failed(message: ControlMessage, error: unknown): void {
+        if (!this.current?.enabled || message.type !== ControlMessage.TYPE_TOUCH) {
+            return;
+        }
+        this.current.failedCount++;
+        const touch = message as TouchControlMessage;
+        const detail = error instanceof Error ? error.message : String(error);
+        this.current.lastError = `发送异常 action=${touch.action} pressure=${touch.pressure}: ${detail}`;
         this.current.render();
     }
 
@@ -126,12 +158,15 @@ export class TouchDiagnostics {
         }
         const { touchstart, touchmove, touchend, touchcancel } = this.counts;
         const text = [
-            '触控诊断 · iPhone-v2-20261026',
+            '触控诊断 · iPhone-v3-20261026',
             `播放器：${this.playerName}`,
             `收到：按 ${touchstart} 移 ${touchmove} 抬 ${touchend} 取消 ${touchcancel}`,
-            `生成 ${this.generatedCount} / 已发 ${this.sentCount}`,
+            `生成 ${this.generatedCount} / 已发 ${this.sentCount} / 失败 ${this.failedCount}`,
+            `按下 ${this.generatedActions[0]}/${this.sentActions[0]} 抬起 ${this.generatedActions[1]}/${this.sentActions[1]}（生成/已发）`,
+            `原始按压力 ${this.downPressure}，最高 ${this.maxPressure}`,
             `命中：${this.lastTarget}`,
             this.status,
+            ...(this.lastError ? [this.lastError] : []),
         ].join('\n');
         this.element.textContent = this.menuOutput.textContent = text;
     }

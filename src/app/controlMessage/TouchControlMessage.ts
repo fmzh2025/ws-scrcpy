@@ -23,7 +23,7 @@ export class TouchControlMessage extends ControlMessage {
      * - For a mouse, the value is set to 1 if the primary mouse button is pressed
      * or 0 otherwise.
      *
-     * - scrcpy server expects signed short (2 bytes) for a pressure value
+     * - scrcpy encodes normalized pressure as an unsigned 16-bit value
      * - in browser TouchEvent has `force` property (values in 0..1 range), we
      * use it as "pressure" for scrcpy
      */
@@ -53,7 +53,10 @@ export class TouchControlMessage extends ControlMessage {
         offset = buffer.writeUInt32BE(this.position.point.y, offset);
         offset = buffer.writeUInt16BE(this.position.screenSize.width, offset);
         offset = buffer.writeUInt16BE(this.position.screenSize.height, offset);
-        offset = buffer.writeUInt16BE(this.pressure * TouchControlMessage.MAX_PRESSURE_VALUE, offset);
+        // Some touch devices report calibrated pressure above 1. Saturate it to
+        // the wire format's range so a DOWN cannot throw while its UP still sends.
+        const pressure = Number.isFinite(this.pressure) ? Math.min(1, Math.max(0, this.pressure)) : 0;
+        offset = buffer.writeUInt16BE(Math.round(pressure * TouchControlMessage.MAX_PRESSURE_VALUE), offset);
         buffer.writeUInt32BE(this.buttons, offset);
         return buffer;
     }

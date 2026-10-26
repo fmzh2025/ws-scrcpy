@@ -161,7 +161,12 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
 
     public sendEvent(event: ControlMessage): void {
         if (this.ws && this.ws.readyState === this.ws.OPEN) {
-            this.ws.send(event.toBuffer());
+            try {
+                this.ws.send(event.toBuffer());
+            } catch (error) {
+                TouchDiagnostics.failed(event, error);
+                throw error;
+            }
             TouchDiagnostics.sent(event, true);
         } else {
             this.events.push(event);
