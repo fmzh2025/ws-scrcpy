@@ -44,12 +44,24 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     private readonly screenInfoMap: Map<number, ScreenInfo> = new Map();
     private readonly videoSettingsMap: Map<number, VideoSettings> = new Map();
     private hasInitialInfo = false;
+    private reconnectTimer?: number;
+    private reconnectAttempts = 0;
+    private stopped = false;
+    private suspended = false;
 
     constructor(params: P) {
         super(params);
-        this.openNewConnection();
-        if (this.ws) {
-            this.ws.binaryType = 'arraybuffer';
+        this.suspended = document.hidden;
+        document.addEventListener('visibilitychange', this.onVisibilityChange);
+        if (!this.suspended) {
+            this.openConnection();
+        }
+    }
+
+    private openConnection(): void {
+        const ws = this.openNewConnection();
+        if (ws) {
+            ws.binaryType = 'arraybuffer';
         }
     }
 
@@ -127,6 +139,15 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     protected onSocketClose(ev: CloseEvent): void {
         console.log(`${TAG}. WS closed: ${ev.reason}`);
         this.emit('disconnected', ev);
+        if (!this.stopped && !this.suspended && !this.reconnectTimer) {
+            const delay = Math.min(10_000, 1_000 * 2 ** this.reconnectAttempts++);
+            this.reconnectTimer = window.setTimeout(() => {
+                this.reconnectTimer = undefined;
+                if (!this.stopped && !this.suspended) {
+                    this.openConnection();
+                }
+            }, delay);
+        }
     }
 
     protected onSocketMessage(event: MessageEvent): void {
@@ -150,6 +171,7 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     }
 
     protected onSocketOpen(): void {
+        this.reconnectAttempts = 0;
         this.emit('connected', void 0);
         let e = this.events.shift();
         while (e) {
@@ -167,11 +189,39 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     }
 
     public stop(): void {
+        this.stopped = true;
+        document.removeEventListener('visibilitychange', this.onVisibilityChange);
+        if (this.reconnectTimer) {
+            window.clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = undefined;
+        }
         if (this.ws && this.ws.readyState === this.ws.OPEN) {
             this.ws.close();
         }
         this.events.length = 0;
     }
+
+    private onVisibilityChange = (): void => {
+        if (this.stopped) {
+            return;
+        }
+        if (document.hidden) {
+            this.suspended = true;
+            if (this.reconnectTimer) {
+                window.clearTimeout(this.reconnectTimer);
+                this.reconnectTimer = undefined;
+            }
+            if (this.ws && this.ws.readyState !== this.ws.CLOSED && this.ws.readyState !== this.ws.CLOSING) {
+                this.ws.close();
+            }
+            return;
+        }
+        this.suspended = false;
+        this.reconnectAttempts = 0;
+        if (!this.ws || this.ws.readyState === this.ws.CLOSED || this.ws.readyState === this.ws.CLOSING) {
+            this.openConnection();
+        }
+    };
 
     public getEncoders(): string[] {
         return Array.from(this.encodersSet.values());

@@ -257,21 +257,9 @@ export class StreamClientScrcpy
     };
 
     public onDisconnected = (): void => {
-        this.streamReceiver.off('deviceMessage', this.OnDeviceMessage);
-        this.streamReceiver.off('video', this.onVideo);
-        this.streamReceiver.off('clientsStats', this.onClientsStats);
-        this.streamReceiver.off('displayInfo', this.onDisplayInfo);
-        this.streamReceiver.off('disconnected', this.onDisconnected);
-
-        this.filePushHandler?.release();
-        this.filePushHandler = undefined;
-        this.touchHandler?.release();
-        this.touchHandler = undefined;
-        this.inlineKeyboard?.release();
-        this.inlineKeyboard = undefined;
-        this.adbOverlay?.release();
-        this.adbOverlay = undefined;
-        this.removePagePasteHandler();
+        // Keep controls and listeners alive while StreamReceiver reconnects.
+        this.joinedStream = false;
+        console.warn(TAG, 'Stream disconnected; waiting for transport reconnect');
     };
 
     public startStream({ udid, player, playerName, videoSettings, fitToScreen }: StartParams): void {
