@@ -34,8 +34,12 @@ export class MsePlayer extends BasePlayer {
         const tag = document.createElement('video') as HTMLVideoElement;
         tag.muted = true;
         tag.autoplay = true;
+        // Keep Safari playback inside the page so the touch canvas stays above it.
+        tag.playsInline = true;
         tag.setAttribute('muted', 'muted');
         tag.setAttribute('autoplay', 'autoplay');
+        tag.setAttribute('playsinline', '');
+        tag.setAttribute('webkit-playsinline', '');
         if (typeof id === 'string') {
             tag.id = id;
         }

@@ -32,6 +32,7 @@ import { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
 import { ScrcpyFilePushStream } from '../filePush/ScrcpyFilePushStream';
 import { InlineKeyboardOverlay } from '../InlineKeyboardOverlay';
 import { AdbOverlay } from './AdbOverlay';
+import { TouchDiagnostics } from '../../interactionHandler/TouchDiagnostics';
 
 type StartParams = {
     udid: string;
@@ -65,6 +66,7 @@ export class StreamClientScrcpy
     private pasteStatusTimeout?: number;
     private inlineKeyboard?: InlineKeyboardOverlay;
     private adbOverlay?: AdbOverlay;
+    private touchDiagnostics?: TouchDiagnostics;
     private readonly streamReceiver: StreamReceiverScrcpy;
 
     public static registerPlayer(playerClass: PlayerClass): void {
@@ -328,6 +330,8 @@ export class StreamClientScrcpy
             this.inlineKeyboard = undefined;
             this.adbOverlay?.release();
             this.adbOverlay = undefined;
+            this.touchDiagnostics?.release();
+            this.touchDiagnostics = undefined;
             this.removePagePasteHandler();
         };
 
@@ -348,6 +352,7 @@ export class StreamClientScrcpy
         player.pause();
 
         document.body.appendChild(deviceView);
+        this.touchDiagnostics = TouchDiagnostics.create(player.getTouchableElement());
         document.addEventListener('paste', this.onPagePaste, true);
         if (fitToScreen) {
             const newBounds = this.getMaxSize();

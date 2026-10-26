@@ -5,6 +5,7 @@ import { TouchControlMessage } from '../controlMessage/TouchControlMessage';
 import MotionEvent from '../MotionEvent';
 import ScreenInfo from '../ScreenInfo';
 import { ScrollControlMessage } from '../controlMessage/ScrollControlMessage';
+import { TouchDiagnostics } from './TouchDiagnostics';
 
 const TAG = '[FeaturedTouchHandler]';
 
@@ -58,6 +59,7 @@ export class FeaturedInteractionHandler extends InteractionHandler {
     protected onInteraction(event: MouseEvent | TouchEvent): void {
         const screenInfo = this.player.getScreenInfo();
         if (!screenInfo) {
+            TouchDiagnostics.ignored('尚未收到屏幕尺寸');
             return;
         }
         let messages: ControlMessage[];
@@ -75,9 +77,10 @@ export class FeaturedInteractionHandler extends InteractionHandler {
             if (this.over) {
                 this.lastPosition = event;
             }
-        } else if (window['TouchEvent'] && event instanceof TouchEvent) {
+        } else if (event.type.startsWith('touch') && 'changedTouches' in event) {
             // TODO: Research drag from out of the target inside it
             if (event.target !== this.tag) {
+                TouchDiagnostics.ignored('触摸未命中控制层');
                 return;
             }
             storage = this.storedFromTouchEvent;
@@ -90,6 +93,7 @@ export class FeaturedInteractionHandler extends InteractionHandler {
             event.preventDefault();
         }
         event.stopPropagation();
+        TouchDiagnostics.generated(messages, event.type);
         messages.forEach((message) => {
             this.listener.sendMessage(message);
         });

@@ -97,8 +97,20 @@ export abstract class InteractionHandler {
     protected abstract onInteraction(event: MouseEvent | TouchEvent): void;
     protected abstract onKey(event: KeyboardEvent): void;
 
+    private onDirectTouch = (event: Event): void => {
+        this.onInteraction(event as TouchEvent);
+    };
+
     protected static bindGlobalListeners(interactionHandler: InteractionHandler): void {
         interactionHandler.touchEventsNames.forEach((eventName) => {
+            if (eventName.startsWith('touch')) {
+                interactionHandler.tag.addEventListener(
+                    eventName,
+                    interactionHandler.onDirectTouch,
+                    InteractionHandler.options,
+                );
+                return;
+            }
             let set: Set<InteractionHandler> | undefined = InteractionHandler.eventListeners.get(eventName);
             if (!set) {
                 set = new Set();
@@ -120,6 +132,10 @@ export abstract class InteractionHandler {
 
     protected static unbindListeners(touchHandler: InteractionHandler): void {
         touchHandler.touchEventsNames.forEach((eventName) => {
+            if (eventName.startsWith('touch')) {
+                touchHandler.tag.removeEventListener(eventName, touchHandler.onDirectTouch, false);
+                return;
+            }
             const set = InteractionHandler.eventListeners.get(eventName);
             if (!set) {
                 return;
@@ -288,7 +304,7 @@ export abstract class InteractionHandler {
             if (!previous) {
                 if (
                     (originalEvent instanceof MouseEvent && originalEvent.buttons) ||
-                    (window['TouchEvent'] && originalEvent instanceof TouchEvent)
+                    'changedTouches' in originalEvent
                 ) {
                     console.warn(logPrefix, 'Received ACTION_MOVE while there are no DOWN stored');
                     const emulated = InteractionHandler.createEmulatedMessage(MotionEvent.ACTION_DOWN, message);

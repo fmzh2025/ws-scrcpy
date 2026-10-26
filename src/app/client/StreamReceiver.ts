@@ -6,6 +6,7 @@ import ScreenInfo from '../ScreenInfo';
 import Util from '../Util';
 import { DisplayInfo } from '../DisplayInfo';
 import { ParamsStream } from '../../types/ParamsStream';
+import { TouchDiagnostics } from '../interactionHandler/TouchDiagnostics';
 
 const DEVICE_NAME_FIELD_LENGTH = 64;
 const MAGIC_BYTES_INITIAL = Util.stringToUtf8ByteArray('scrcpy_initial');
@@ -161,8 +162,10 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     public sendEvent(event: ControlMessage): void {
         if (this.ws && this.ws.readyState === this.ws.OPEN) {
             this.ws.send(event.toBuffer());
+            TouchDiagnostics.sent(event, true);
         } else {
             this.events.push(event);
+            TouchDiagnostics.sent(event, false);
         }
     }
 
