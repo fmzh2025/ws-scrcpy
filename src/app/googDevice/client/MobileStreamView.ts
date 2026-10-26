@@ -2,11 +2,15 @@ import { BasePlayer } from '../../player/BasePlayer';
 import Size from '../../Size';
 import VideoSettings from '../../VideoSettings';
 
-/** Fit the presentation independently of the encoded video and touch coordinates. */
+/** Size the presentation independently of the encoded video. */
 export class MobileStreamView {
     private readonly toggle = document.createElement('button');
     private readonly closeMenu = document.createElement('button');
+    private readonly fitControl = document.createElement('label');
+    private readonly fitSelect = document.createElement('select');
+    private fit: 'fill' | 'contain' = 'fill';
     private frame?: number;
+    private static readonly fitStorageKey = 'ws-scrcpy:mobile-video-fit';
 
     public static isEnabled(): boolean {
         const override = new URLSearchParams(location.search).get('mobile');
@@ -53,6 +57,37 @@ export class MobileStreamView {
         this.closeMenu.textContent = '关闭菜单';
         this.closeMenu.onclick = () => this.hideMenu();
         menu.insertBefore(this.closeMenu, menu.firstChild);
+        try {
+            if (localStorage.getItem(MobileStreamView.fitStorageKey) === 'contain') {
+                this.fit = 'contain';
+            }
+        } catch (_) {
+            // A restricted Safari storage policy must not block the stream.
+        }
+        this.fitControl.className = 'mobile-video-fit';
+        this.fitControl.textContent = '画面适配 ';
+        this.fitSelect.setAttribute('aria-label', '画面适配');
+        for (const [value, text] of [
+            ['fill', '完整铺满'],
+            ['contain', '保持原比例'],
+        ]) {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = text;
+            this.fitSelect.appendChild(option);
+        }
+        this.fitSelect.value = this.fit;
+        this.fitSelect.onchange = () => {
+            this.fit = this.fitSelect.value === 'contain' ? 'contain' : 'fill';
+            try {
+                localStorage.setItem(MobileStreamView.fitStorageKey, this.fit);
+            } catch (_) {
+                // The current page can still change its presentation.
+            }
+            this.layout();
+        };
+        this.fitControl.appendChild(this.fitSelect);
+        menu.insertBefore(this.fitControl, this.closeMenu.nextSibling);
         player.on('video-view-resize', this.layout);
         window.addEventListener('resize', this.scheduleLayout);
         window.visualViewport?.addEventListener('resize', this.scheduleLayout);
@@ -81,6 +116,8 @@ export class MobileStreamView {
         const viewport = window.visualViewport;
         this.view.style.height = `${viewport?.height || window.innerHeight}px`;
         this.view.style.top = `${viewport?.offsetTop || 0}px`;
+        // The input layer must use the same fit mode as the rendered pixels.
+        this.player.getTouchableElement().dataset.videoFit = this.fit;
         const size = this.player.getScreenInfo()?.videoSize;
         if (!size || !size.width || !size.height) {
             return;
@@ -89,8 +126,8 @@ export class MobileStreamView {
         const width = this.view.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
         const height = this.view.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
         const scale = Math.min(width / size.width, height / size.height);
-        this.video.style.width = `${Math.max(1, Math.floor(size.width * scale))}px`;
-        this.video.style.height = `${Math.max(1, Math.floor(size.height * scale))}px`;
+        this.video.style.width = `${Math.max(1, this.fit === 'fill' ? width : size.width * scale)}px`;
+        this.video.style.height = `${Math.max(1, this.fit === 'fill' ? height : size.height * scale)}px`;
     };
 
     public release(): void {
@@ -103,5 +140,7 @@ export class MobileStreamView {
         }
         this.toggle.remove();
         this.closeMenu.remove();
+        this.fitControl.remove();
+        delete this.player.getTouchableElement().dataset.videoFit;
     }
 }

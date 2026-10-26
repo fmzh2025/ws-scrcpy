@@ -44,7 +44,7 @@ export class TouchDiagnostics {
         this.element.className = 'touch-diagnostics';
         this.menuPanel.className = 'touch-diagnostics-menu';
         const version = document.createElement('div');
-        version.textContent = '触控版本：iPhone-v4-20261026';
+        version.textContent = '触控版本：iPhone-v5-20261026';
         const label = document.createElement('label');
         this.enabledInput.type = 'checkbox';
         this.enabledInput.onchange = () => this.setEnabled(this.enabledInput.checked);
@@ -158,7 +158,7 @@ export class TouchDiagnostics {
         }
         const { touchstart, touchmove, touchend, touchcancel } = this.counts;
         const text = [
-            '触控诊断 · iPhone-v4-20261026',
+            '触控诊断 · iPhone-v5-20261026',
             `播放器：${this.playerName}`,
             `收到：按 ${touchstart} 移 ${touchmove} 抬 ${touchend} 取消 ${touchcancel}`,
             `生成 ${this.generatedCount} / 已发 ${this.sentCount} / 失败 ${this.failedCount}`,

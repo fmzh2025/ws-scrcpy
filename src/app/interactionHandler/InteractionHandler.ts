@@ -238,7 +238,10 @@ export abstract class InteractionHandler {
         const ratio = width / height;
         const shouldBe = Math.round(eps * ratio);
         const haveNow = Math.round((eps * clientWidth) / clientHeight);
-        if (shouldBe > haveNow) {
+        // A stretched mobile picture uses independent X/Y scales. Letterbox
+        // compensation is only correct for a presentation that keeps its ratio.
+        const keepAspectRatio = target.dataset?.videoFit !== 'fill';
+        if (keepAspectRatio && shouldBe > haveNow) {
             const realHeight = Math.ceil(clientWidth / ratio);
             const top = (clientHeight - realHeight) / 2;
             if (touchY < top || touchY > top + realHeight) {
@@ -246,7 +249,7 @@ export abstract class InteractionHandler {
             }
             touchY -= top;
             clientHeight = realHeight;
-        } else if (shouldBe < haveNow) {
+        } else if (keepAspectRatio && shouldBe < haveNow) {
             const realWidth = Math.ceil(clientHeight * ratio);
             const left = (clientWidth - realWidth) / 2;
             if (touchX < left || touchX > left + realWidth) {

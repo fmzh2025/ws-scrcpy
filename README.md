@@ -43,6 +43,10 @@ npm start
 
 See [SilkPulse integration](docs/silkpulse.md) for configuration, session switches, iPhone verification and AI diagnostics. Production debugging is disabled by default.
 
+## Mobile display
+
+Mobile streams fill the available viewport by default, preserving the complete picture while allowing it to stretch. In the floating control menu, open More and choose **画面适配 → 保持原比例** to restore the original aspect ratio. The preference is saved in this browser. Both modes retain touch coordinate mapping; Safari's browser bars remain outside the page's usable area.
+
 ## Supported features
 
 ### Android

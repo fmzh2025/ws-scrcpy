@@ -480,7 +480,20 @@ body.remote-keyboard {
     width: 100%;
     height: 100%;
     transform: none !important;
-    object-fit: contain;
+    object-fit: fill;
+}
+
+.mobile-video-fit {
+    display: block;
+    margin: 12px 0;
+}
+
+.mobile-video-fit select {
+    max-width: 100%;
+    min-height: 36px;
+    font-size: 16px;
+    color: var(--text-color);
+    background: var(--main-bg-color);
 }
 
 .mobile-stream-view .control-buttons-list {

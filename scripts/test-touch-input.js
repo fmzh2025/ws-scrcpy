@@ -4,7 +4,7 @@ require('ts-node/register/transpile-only');
 require.extensions['.png'] = (module) => { module.exports = 'touch-point.png'; };
 
 class Target {
-    constructor() { this.listeners = new Map(); this.clientWidth = 320; this.clientHeight = 720; this.left = 0; this.top = 0; }
+    constructor() { this.listeners = new Map(); this.clientWidth = 320; this.clientHeight = 720; this.left = 0; this.top = 0; this.dataset = {}; }
     addEventListener(name, listener, options) {
         const list = this.listeners.get(name) || [];
         list.push({listener, options}); this.listeners.set(name, list);
@@ -91,6 +91,26 @@ emit('touchstart', [touch(31, 398, 176)]);
 emit('touchend', [touch(31, 398, 176)]);
 assert.deepStrictEqual(sent.map(message => [message.position.point.x, message.position.point.y]),
     [[1080, 480], [1080, 480]]);
+
+// Full-width mobile presentation stretches the two axes independently. Taps
+// near the edges must reach Android rather than being discarded as black bars.
+sent.length = 0;
+streamedSize = new Size(960, 2160);
+Object.assign(tag, {clientWidth: 402, clientHeight: 714, left: 0, top: 0});
+tag.dataset.videoFit = 'fill';
+emit('touchstart', [touch(32, 0, 357)]);
+emit('touchmove', [touch(32, 100.5, 178.5)]);
+emit('touchend', [touch(32, 100.5, 178.5)]);
+assert.deepStrictEqual(sent.map(message => [message.position.point.x, message.position.point.y]),
+    [[0, 1080], [240, 540], [240, 540]]);
+sent.forEach(message => assert(Buffer.isBuffer(message.toBuffer())));
+sent.length = 0;
+streamedSize = new Size(2160, 960);
+Object.assign(tag, {clientWidth: 714, clientHeight: 402});
+emit('touchstart', [touch(33, 178.5, 100.5)]);
+emit('touchend', [touch(33, 178.5, 100.5)]);
+assert.deepStrictEqual(sent.map(message => [message.position.point.x, message.position.point.y]),
+    [[540, 240], [540, 240]]);
 
 handler.release();
 assert.strictEqual(tag.listeners.get('touchstart').length, 0);
