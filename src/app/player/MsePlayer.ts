@@ -22,13 +22,13 @@ export class MsePlayer extends BasePlayer {
     public static readonly preferredVideoSettings: VideoSettings = new VideoSettings({
         lockedVideoOrientation: -1,
         bitrate: 7340032,
-        maxFps: 60,
-        iFrameInterval: 10,
+        maxFps: 30,
+        iFrameInterval: 1,
         bounds: new Size(720, 720),
         sendFrameMeta: false,
     });
     private static DEFAULT_FRAMES_PER_FRAGMENT = 1;
-    private static DEFAULT_FRAMES_PER_SECOND = 60;
+    private static DEFAULT_FRAMES_PER_SECOND = 30;
 
     public static createElement(id?: string): HTMLVideoElement {
         const tag = document.createElement('video') as HTMLVideoElement;
@@ -64,7 +64,7 @@ export class MsePlayer extends BasePlayer {
     protected readonly isChrome = navigator.userAgent.includes('Chrome');
     protected readonly isMac = navigator.platform.startsWith('Mac');
     private MAX_TIME_TO_RECOVER = 200; // ms
-    private MAX_BUFFER = this.isSafari ? 2 : this.isChrome && this.isMac ? 0.9 : 0.2;
+    private MAX_BUFFER = this.isSafari ? 2 : this.isChrome && this.isMac ? 0.25 : 0.2;
     private MAX_AHEAD = -0.2;
 
     public static isSupported(): boolean {
@@ -297,9 +297,8 @@ export class MsePlayer extends BasePlayer {
         super.pushFrame(frame);
         if (!this.checkForIFrame(frame)) {
             this.frames.push(frame);
-        } else {
-            this.checkForBadState();
         }
+        this.checkForBadState();
     }
 
     protected checkForBadState(): void {
@@ -333,7 +332,7 @@ export class MsePlayer extends BasePlayer {
             const end = this.tag.buffered.end(0);
             const buffered = end - currentTime;
 
-            if ((end | 0) - currentTime > this.MAX_BUFFER) {
+            if (end - currentTime > this.MAX_BUFFER) {
                 if (this.bigBufferSince === -1) {
                     this.bigBufferSince = now;
                 } else {

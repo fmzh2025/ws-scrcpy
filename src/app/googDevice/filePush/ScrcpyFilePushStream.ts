@@ -3,9 +3,6 @@ import { StreamReceiverScrcpy } from '../client/StreamReceiverScrcpy';
 import DeviceMessage from '../DeviceMessage';
 import { CommandControlMessage, FilePushState } from '../../controlMessage/CommandControlMessage';
 
-const ALLOWED_TYPES = ['application/vnd.android.package-archive'];
-const ALLOWED_NAME_RE = /\.apk$/i;
-
 export class ScrcpyFilePushStream extends FilePushStream {
     constructor(private readonly streamReceiver: StreamReceiverScrcpy) {
         super();
@@ -15,9 +12,10 @@ export class ScrcpyFilePushStream extends FilePushStream {
         return this.streamReceiver.hasConnection();
     }
 
-    public isAllowedFile(file: File): boolean {
-        const { type, name } = file;
-        return (type && ALLOWED_TYPES.includes(type)) || (!type && ALLOWED_NAME_RE.test(name));
+    public isAllowedFile(): boolean {
+        // Every dropped file is kept in the device Download directory after
+        // transfer. APKs are installed by the server-side finalization step.
+        return true;
     }
 
     public sendEventAppend({ id, chunk }: { id: number; chunk: Uint8Array }): void {

@@ -17,6 +17,7 @@ enum State {
 export class FilePushReader {
     private static fileId = 1;
     private static maxId = 4294967295; // 2^32 - 1
+    private static readonly SAFE_FILE_NAME = /^(?!\.{1,2}$)[^/\\\0]{1,240}$/;
 
     public static handle(serial: string, channel: WebSocket): FilePushReader {
         return new FilePushReader(serial, channel);
@@ -97,7 +98,7 @@ export class FilePushReader {
                     return;
                 }
                 const { fileName, fileSize } = command;
-                if (!fileName) {
+                if (!fileName || !FilePushReader.SAFE_FILE_NAME.test(fileName)) {
                     this.closeWithError(FilePushResponseStatus.ERROR_INVALID_NAME);
                     return;
                 }
@@ -191,7 +192,11 @@ export class FilePushReader {
         this.readStream = new ReadStream(this.fileName, opts);
         this.readStream.push(chunk);
         const client = AdbExtended.createClient();
-        this.pushTransfer = await client.push(this.serial, this.readStream, this.fileName);
+        // Keep every browser upload in a controlled device-side staging area.
+        // finalizeUploadedFiles() then installs APKs or moves ordinary files
+        // into /sdcard/Download/.
+        const destination = `/data/local/tmp/${this.fileName}`;
+        this.pushTransfer = await client.push(this.serial, this.readStream, destination);
         client.on('error', (error: Error) => {
             console.error(`Client error (${this.serial} | ${this.fileName}):`, error.message);
             this.closeWithError(FilePushResponseStatus.ERROR_OTHER, error.message);

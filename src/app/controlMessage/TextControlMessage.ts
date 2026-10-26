@@ -1,5 +1,6 @@
 import { Buffer } from 'buffer';
 import { ControlMessage, ControlMessageInterface } from './ControlMessage';
+import Util from '../Util';
 
 export interface TextControlMessageInterface extends ControlMessageInterface {
     text: string;
@@ -19,12 +20,13 @@ export class TextControlMessage extends ControlMessage {
      * @override
      */
     public toBuffer(): Buffer {
-        const length = this.text.length;
+        const textBytes = Util.stringToUtf8ByteArray(this.text);
+        const length = textBytes.length;
         const buffer = Buffer.alloc(length + 1 + TextControlMessage.TEXT_SIZE_FIELD_LENGTH);
         let offset = 0;
         offset = buffer.writeUInt8(this.type, offset);
         offset = buffer.writeUInt32BE(length, offset);
-        buffer.write(this.text, offset);
+        textBytes.forEach((byte, index) => buffer.writeUInt8(byte, offset + index));
         return buffer;
     }
 

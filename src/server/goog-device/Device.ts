@@ -24,6 +24,11 @@ export interface DeviceEvents {
 export class Device extends TypedEmitter<DeviceEvents> {
     private static readonly INITIAL_UPDATE_TIMEOUT = 1500;
     private static readonly MAX_UPDATES_COUNT = 7;
+    private static readonly SAFE_APK_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.apk$/i;
+    private static readonly SAFE_UPLOADED_FILE_NAME = /^(?!\.{1,2}$)[^/\\\0]{1,240}$/;
+    private static readonly RESERVED_UPLOAD_FILE_NAMES = new Set(['scrcpy-server.jar', 'ws_scrcpy.pid']);
+    private static readonly TEMP_PATH = '/data/local/tmp/';
+    private static readonly DOWNLOAD_PATH = '/sdcard/Download/';
     private connected = true;
     private pidDetectionVariant: PID_DETECTION = PID_DETECTION.UNKNOWN;
     private client: AdbKitClient;
@@ -125,6 +130,24 @@ export class Device extends TypedEmitter<DeviceEvents> {
         });
     }
 
+    public async runAdbCommand(args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
+        return new Promise((resolve, reject) => {
+            const adb = spawn('adb', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+            let stdout = '';
+            let stderr = '';
+            adb.stdout.on('data', (data) => {
+                stdout += data.toString();
+            });
+            adb.stderr.on('data', (data) => {
+                stderr += data.toString();
+            });
+            adb.on('error', reject);
+            adb.on('close', (code) => {
+                resolve({ stdout, stderr, code: typeof code === 'number' ? code : 1 });
+            });
+        });
+    }
+
     public async runShellCommandAdbKit(command: string): Promise<string> {
         return this.client
             .shell(this.udid, command)
@@ -134,6 +157,98 @@ export class Device extends TypedEmitter<DeviceEvents> {
 
     public async push(contents: string, path: string): Promise<PushTransfer> {
         return this.client.push(this.udid, contents, path);
+    }
+
+    public async installUploadedApks(fileNames: string[]): Promise<string> {
+        if (!this.connected) {
+            throw new Error(`Device "${this.udid}" is not connected`);
+        }
+        if (!fileNames.length || fileNames.some((fileName) => !Device.SAFE_APK_FILE_NAME.test(fileName))) {
+            throw new Error('Invalid APK file name');
+        }
+        const names = Array.from(new Set(fileNames));
+        if (names.length !== fileNames.length) {
+            throw new Error('Duplicate APK file name');
+        }
+        names.sort((a, b) => (a === 'base.apk' ? -1 : b === 'base.apk' ? 1 : 0));
+        if (names.length === 1) {
+            return this.runShellCommandAdbKit(`pm install -r /data/local/tmp/${names[0]}`);
+        }
+        return this.installSplitApks(names);
+    }
+
+    public async finalizeUploadedFiles(fileNames: string[]): Promise<string> {
+        if (!this.connected) {
+            throw new Error(`Device "${this.udid}" is not connected`);
+        }
+        if (!fileNames.length || fileNames.some((fileName) => !Device.isSafeUploadedFileName(fileName))) {
+            throw new Error('Invalid uploaded file name');
+        }
+        const names = Array.from(new Set(fileNames));
+        if (names.length !== fileNames.length) {
+            throw new Error('Duplicate uploaded file name');
+        }
+
+        const apks = names.filter((fileName) => /\.apk$/i.test(fileName));
+        const otherFiles = names.filter((fileName) => !/\.apk$/i.test(fileName));
+        const output: string[] = [];
+        if (otherFiles.length) {
+            await this.moveUploadedFilesToDownload(otherFiles);
+            output.push(`${otherFiles.length} file(s) saved to Download`);
+        }
+        if (apks.length) {
+            const installOutput = await this.installUploadedApks(apks);
+            if (!/^Success\s*$/m.test(installOutput)) {
+                throw new Error(installOutput || 'APK installation failed');
+            }
+            await this.moveUploadedFilesToDownload(apks);
+            output.push(`${apks.length} APK file(s) saved to Download and installed`);
+        }
+        return output.join('\n');
+    }
+
+    private async moveUploadedFilesToDownload(fileNames: string[]): Promise<void> {
+        const moveCommands = fileNames.map((fileName) => {
+            const source = Device.shellQuote(`${Device.TEMP_PATH}${fileName}`);
+            const destination = Device.shellQuote(`${Device.DOWNLOAD_PATH}${fileName}`);
+            return `mv -f ${source} ${destination}`;
+        });
+        const marker = '__WS_SCRCPY_DOWNLOAD_SAVED__';
+        const moveOutput = await this.runShellCommandAdbKit(
+            `mkdir -p ${Device.shellQuote(Device.DOWNLOAD_PATH)} && ${moveCommands.join(' && ')} && echo ${marker}`,
+        );
+        if (!moveOutput.includes(marker)) {
+            throw new Error(`Unable to move uploaded file to Download: ${moveOutput || 'unknown error'}`);
+        }
+    }
+
+    private static isSafeUploadedFileName(fileName: string): boolean {
+        return Device.SAFE_UPLOADED_FILE_NAME.test(fileName) && !Device.RESERVED_UPLOAD_FILE_NAMES.has(fileName);
+    }
+
+    private static shellQuote(value: string): string {
+        return `'${value.replace(/'/g, "'\\''")}'`;
+    }
+
+    private async installSplitApks(fileNames: string[]): Promise<string> {
+        const writes: string[] = [];
+        fileNames.forEach((fileName: string) => {
+            const path = `/data/local/tmp/${fileName}`;
+            writes.push(
+                `write_output=$(cmd package install-write -S $(stat -c %s ${path}) "$session_id" ${fileName} ${path})`,
+                'printf "%s\\n" "$write_output"',
+                'case "$write_output" in Success*) ;; *) cmd package install-abandon "$session_id" >/dev/null; exit 0;; esac',
+            );
+        });
+        const commands = [
+            'session_output=$(cmd package install-create -r)',
+            'printf "%s\\n" "$session_output"',
+            'session_id=$(printf "%s\\n" "$session_output" | sed -n "s/.*\\[\\([0-9][0-9]*\\)\\].*/\\1/p")',
+            'if [ -z "$session_id" ]; then exit 0; fi',
+            ...writes,
+            'cmd package install-commit "$session_id"',
+        ];
+        return this.runShellCommandAdbKit(commands.join('; '));
     }
 
     public async getProperties(): Promise<Record<string, string> | undefined> {

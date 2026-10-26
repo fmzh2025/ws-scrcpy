@@ -1,5 +1,6 @@
 import '../style/app.css';
 import { StreamClientScrcpy } from './googDevice/client/StreamClientScrcpy';
+import { RemoteKeyboardClientScrcpy } from './googDevice/client/RemoteKeyboardClientScrcpy';
 import { HostTracker } from './client/HostTracker';
 import { Tool } from './client/Tool';
 
@@ -7,6 +8,11 @@ window.onload = async function (): Promise<void> {
     const hash = location.hash.replace(/^#!/, '');
     const parsedQuery = new URLSearchParams(hash);
     const action = parsedQuery.get('action');
+
+    if (action === RemoteKeyboardClientScrcpy.ACTION && typeof parsedQuery.get('udid') === 'string') {
+        RemoteKeyboardClientScrcpy.start(parsedQuery);
+        return;
+    }
 
     /// #if USE_BROADWAY
     const { BroadwayPlayer } = await import('./player/BroadwayPlayer');

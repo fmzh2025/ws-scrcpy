@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48px" height="48px" viewBox="0 0 48 48" fill="var(--svg-button-fill)">
+    <!-- Phone receiving the remote keystrokes -->
+    <path fill-rule="evenodd" d="M33 4h8c2.21 0 4 1.79 4 4v28c0 2.21-1.79 4-4 4h-8c-2.21 0-4-1.79-4-4V8c0-2.21 1.79-4 4-4zm0 4v28h8V8h-8zm3 25h2v2h-2v-2z"/>
+    <!-- Large transfer arrow, deliberately separate from a normal keyboard -->
+    <path d="M13 16h16v-4l10 8-10 8v-4H13v-8z"/>
+    <!-- External source / text lines -->
+    <path d="M4 15h6v3H4v-3zm0 5h6v3H4v-3zm0 5h6v3H4v-3z"/>
+    <!-- Compact external keyboard -->
+    <path fill-rule="evenodd" d="M4 29h21c2.21 0 4 1.79 4 4v7c0 2.21-1.79 4-4 4H4c-2.21 0-4-1.79-4-4v-7c0-2.21 1.79-4 4-4zm0 4v7h21v-7H4z"/>
+    <path d="M7 35h3v2H7v-2zm5 0h3v2h-3v-2zm5 0h3v2h-3v-2zm4 0h2v2h-2v-2zM7 31h16v2H7v-2z"/>
+</svg>

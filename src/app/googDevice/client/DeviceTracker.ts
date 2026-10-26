@@ -5,6 +5,7 @@ import { ACTION } from '../../../common/Action';
 import GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import { ControlCenterCommand } from '../../../common/ControlCenterCommand';
 import { StreamClientScrcpy } from './StreamClientScrcpy';
+import { StreamReceiverScrcpy } from './StreamReceiverScrcpy';
 import SvgImage from '../../ui/SvgImage';
 import { html } from '../../ui/HtmlTag';
 import Util from '../../Util';
@@ -106,13 +107,14 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             if (!playerFullName || !playerCodeName) {
                 return;
             }
+            const streamParams = {
+                action,
+                udid,
+                player: decodeURIComponent(playerCodeName),
+                ...(StreamReceiverScrcpy.isSameOriginProxyUrl(url, udid) ? {} : { ws: url }),
+            };
             const link = DeviceTracker.buildLink(
-                {
-                    action,
-                    udid,
-                    player: decodeURIComponent(playerCodeName),
-                    ws: url,
-                },
+                streamParams,
                 decodeURIComponent(playerFullName),
                 this.params,
             );
