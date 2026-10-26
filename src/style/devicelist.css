@@ -177,8 +177,16 @@ body.list #device_list_menu {
     color: var(--text-color-light);
 }
 
-#devices .network-details.network-warning {
+#devices .network-details[data-network-tone='warning'] {
     color: hsl(35, 80%, 42%);
+}
+
+#devices .network-details[data-network-tone='danger'] {
+    color: hsl(0, 70%, 48%);
+}
+
+#devices .network-details[data-network-tone='safe'] {
+    color: hsl(135, 55%, 38%);
 }
 
 #devices .network-action {

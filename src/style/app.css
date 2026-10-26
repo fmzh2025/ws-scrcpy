@@ -415,7 +415,9 @@ body.remote-keyboard {
     z-index: 5;
     display: none;
     box-sizing: border-box;
-    width: min(20rem, 75vw);
+    width: min(30rem, 82vw);
+    max-height: min(38rem, 85vh);
+    overflow-y: auto;
     padding: .65rem;
     border: 1px solid var(--button-border-color);
     border-radius: .35rem;
@@ -440,6 +442,34 @@ body.remote-keyboard {
     color: var(--text-color-light);
 }
 
+.stream-network-details > span {
+    display: block;
+    margin: .12rem 0;
+    line-height: 1.35;
+}
+
+.stream-network-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .35rem;
+}
+
+.stream-network-control[data-network-tone='safe'] .stream-network-trigger {
+    border-color: hsl(135, 55%, 42%);
+    color: hsl(135, 65%, 40%);
+}
+
+.stream-network-control[data-network-tone='warning'] .stream-network-trigger {
+    border-color: hsl(35, 80%, 48%);
+    color: hsl(35, 90%, 42%);
+}
+
+.stream-network-control[data-network-tone='danger'] .stream-network-trigger,
+.stream-network-control[data-network-tone='danger'] .stream-network-ip {
+    border-color: hsl(0, 70%, 48%);
+    color: hsl(0, 70%, 48%);
+}
+
 .stream-network-popover button {
     box-sizing: border-box;
     width: calc(100% - .2rem);
@@ -452,6 +482,10 @@ body.remote-keyboard {
     color: var(--button-text-color);
     background: var(--main-bg-color);
     cursor: pointer;
+}
+
+.stream-network-actions button:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
 }
 
 .stream-network-popover button:disabled {

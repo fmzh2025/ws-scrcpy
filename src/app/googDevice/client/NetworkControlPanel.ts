@@ -1,26 +1,10 @@
-type NetworkStatus = {
-    ip?: string;
-    country?: string;
-    countryCode?: string;
-    region?: string;
-    city?: string;
-    checkedAt: number;
-    ipSource?: string;
-    proxy: string;
-    proxyWarning: boolean;
-    hostVpn: {
-        available: boolean;
-        proxy: string;
-        ip?: string;
-        country?: string;
-        region?: string;
-        city?: string;
-        error?: string;
-    };
-};
+import { NetworkRouteStatus } from '../../../types/NetworkRouteStatus';
+import { statusDetails, statusHeadline, statusSummary, statusTone } from './NetworkStatusPresentation';
+
+type NetworkAction = 'apply-host-vpn' | 'lock-device-vpn' | 'clear-android-proxy' | 'lock-current' | 'unlock';
 
 type NetworkStatusResponse = {
-    status?: NetworkStatus;
+    status?: NetworkRouteStatus;
     output?: string;
 };
 
@@ -45,7 +29,9 @@ export class NetworkControlPanel {
         this.trigger.setAttribute('aria-label', 'Show network status and proxy controls');
         this.trigger.addEventListener('click', () => {
             this.popover.classList.toggle('open');
+            this.trigger.setAttribute('aria-expanded', this.popover.classList.contains('open') ? 'true' : 'false');
         });
+        this.trigger.setAttribute('aria-expanded', 'false');
 
         this.popover = document.createElement('section');
         this.popover.className = 'stream-network-popover';
@@ -55,16 +41,22 @@ export class NetworkControlPanel {
         this.status = document.createElement('strong');
         this.status.className = 'stream-network-ip';
         this.status.textContent = 'IP checking...';
-        this.details = document.createElement('span');
+        this.details = document.createElement('div');
         this.details.className = 'stream-network-details';
         this.details.textContent = 'Checking region';
         let buttons: HTMLButtonElement[] = [];
-        const clearButton = this.createButton('Clear proxy', () => this.changeProxy('clear', buttons));
-        const rebootButton = this.createButton('Restart + apply host VPN', () =>
-            this.changeProxy('host-vpn', buttons, true),
+        const hostVpnButton = this.createButton('应用并锁定宿主 VPN', () => this.runAction('apply-host-vpn', buttons));
+        const deviceVpnButton = this.createButton('锁定手机 VPN', () => this.runAction('lock-device-vpn', buttons));
+        const lockButton = this.createButton('锁定当前出口', () => this.runAction('lock-current', buttons));
+        const clearButton = this.createButton('仅清 Android 代理', () =>
+            this.runAction('clear-android-proxy', buttons),
         );
-        buttons = [clearButton, rebootButton];
-        this.popover.append(this.status, this.details, clearButton, rebootButton);
+        const unlockButton = this.createButton('解除 IP 锁定', () => this.runAction('unlock', buttons));
+        buttons = [hostVpnButton, deviceVpnButton, lockButton, clearButton, unlockButton];
+        const buttonGroup = document.createElement('div');
+        buttonGroup.className = 'stream-network-actions';
+        buttonGroup.append(...buttons);
+        this.popover.append(this.status, this.details, buttonGroup);
         this.root.append(this.trigger, this.popover);
         document.addEventListener('visibilitychange', this.onVisibilityChange);
         void this.refresh();
@@ -84,7 +76,7 @@ export class NetworkControlPanel {
     private startRefreshTimer(): void {
         this.stopRefreshTimer();
         if (!document.hidden) {
-            this.refreshTimer = window.setInterval(() => void this.refresh(), 60_000);
+            this.refreshTimer = window.setInterval(() => void this.refresh(true), 15_000);
         }
     }
 
@@ -99,7 +91,7 @@ export class NetworkControlPanel {
         if (document.hidden) {
             this.stopRefreshTimer();
         } else {
-            void this.refresh();
+            void this.refresh(true);
             this.startRefreshTimer();
         }
     };
@@ -112,67 +104,59 @@ export class NetworkControlPanel {
         return button;
     }
 
-    private async refresh(): Promise<void> {
+    private async refresh(force = false): Promise<void> {
         try {
-            const response = await fetch(this.endpoint(`network/status?udid=${encodeURIComponent(this.udid)}`));
+            const response = await fetch(
+                this.endpoint(`network/status?udid=${encodeURIComponent(this.udid)}${force ? '&refresh=1' : ''}`),
+                { cache: 'no-store' },
+            );
             const result = (await response.json().catch(() => ({}))) as NetworkStatusResponse;
             if (!response.ok || !result.status) {
                 throw new Error(result.output || `Unable to read network status (${response.status})`);
             }
-            const status = result.status;
-            const verified = status.ipSource === 'emulator-network' && !!status.ip;
-            this.status.textContent = verified ? `Emulator IP: ${status.ip}` : 'Emulator IP not verified';
-            const location = [status.country, status.region, status.city].filter(Boolean).join(' / ');
-            const proxy =
-                status.proxy && status.proxy !== ':0' ? `Android proxy: ${status.proxy}` : 'Android proxy: off';
-            const checked = new Date(status.checkedAt).toLocaleTimeString();
-            const summary = `${verified ? status.ip : 'IP not verified'} | ${
-                location || 'Unknown region'
-            } | ${proxy} | ${verified ? 'verified in emulator' : 'verification failed'}`;
-            this.trigger.title = summary;
-            const vpnLocation = [status.hostVpn.country, status.hostVpn.region, status.hostVpn.city]
-                .filter(Boolean)
-                .join(' / ');
-            const vpnText = status.hostVpn.available
-                ? `Host VPN exit: ${status.hostVpn.ip || 'IP unavailable'}${vpnLocation ? `, ${vpnLocation}` : ''}`
-                : `Host VPN: off (${status.hostVpn.error || 'unavailable'})`;
-            this.details.textContent = `${location || 'Unknown region'} | ${proxy} | ${vpnText} | ${
-                verified ? 'verified in emulator' : 'IP not verified'
-            } | checked ${checked}`;
-            this.details.classList.toggle('network-warning', !verified || status.proxyWarning);
+            this.render(result.status);
         } catch (error: unknown) {
-            this.status.textContent = 'Emulator IP unavailable';
+            this.status.textContent = '实际出口 IP：检测失败';
             this.details.textContent = error instanceof Error ? error.message : 'Network status failed';
             this.trigger.title = this.details.textContent;
-            this.details.classList.add('network-warning');
+            this.root.setAttribute('data-network-tone', 'danger');
         }
     }
 
-    private async changeProxy(mode: 'clear' | 'host-vpn', buttons: HTMLButtonElement[], reboot = false): Promise<void> {
+    private render(status: NetworkRouteStatus): void {
+        this.status.textContent = statusHeadline(status);
+        this.trigger.title = statusDetails(status).join('\n');
+        this.root.setAttribute('data-network-tone', statusTone(status));
+        this.details.replaceChildren(
+            ...statusDetails(status).map((line) => {
+                const element = document.createElement('span');
+                element.textContent = line;
+                return element;
+            }),
+        );
+        this.trigger.setAttribute('aria-label', statusSummary(status));
+    }
+
+    private async runAction(action: NetworkAction, buttons: HTMLButtonElement[]): Promise<void> {
         buttons.forEach((button) => (button.disabled = true));
         try {
             const response = await fetch(this.endpoint('network/proxy'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ udid: this.udid, mode, reboot }),
+                body: JSON.stringify({ udid: this.udid, action }),
             });
-            const result = (await response.json().catch(() => ({}))) as NetworkStatusResponse & { rebooting?: boolean };
+            const result = (await response.json().catch(() => ({}))) as NetworkStatusResponse;
             if (!response.ok) {
                 throw new Error(result.output || `Unable to change proxy (${response.status})`);
             }
-            this.details.textContent = result.rebooting
-                ? 'Device restarting; waiting to verify proxy...'
-                : 'Apps stopped; proxy applied';
-            if (result.rebooting) {
-                [12_000, 24_000, 36_000].forEach((delay) => {
-                    window.setTimeout(() => void this.refresh(), delay);
-                });
+            if (result.status) {
+                this.render(result.status);
             } else {
-                await this.refresh();
+                await this.refresh(true);
             }
         } catch (error: unknown) {
             this.details.textContent = error instanceof Error ? error.message : 'Proxy change failed';
-            this.details.classList.add('network-warning');
+            this.root.setAttribute('data-network-tone', 'danger');
         } finally {
             buttons.forEach((button) => (button.disabled = false));
         }

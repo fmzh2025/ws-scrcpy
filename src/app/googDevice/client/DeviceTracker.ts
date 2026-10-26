@@ -16,30 +16,12 @@ import { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
 import { HostItem } from '../../../types/Configuration';
 import { ChannelCode } from '../../../common/ChannelCode';
 import { Tool } from '../../client/Tool';
+import { NetworkRouteStatus } from '../../../types/NetworkRouteStatus';
+import { statusDetails, statusHeadline, statusSummary, statusTone } from './NetworkStatusPresentation';
 
 type Field = keyof GoogDeviceDescriptor | ((descriptor: GoogDeviceDescriptor) => string);
 type DescriptionColumn = { title: string; field: Field };
-type NetworkStatus = {
-    ip?: string;
-    country?: string;
-    countryCode?: string;
-    region?: string;
-    city?: string;
-    isp?: string;
-    checkedAt: number;
-    ipSource?: string;
-    proxy: string;
-    proxyWarning: boolean;
-    hostVpn: {
-        available: boolean;
-        proxy: string;
-        ip?: string;
-        country?: string;
-        region?: string;
-        city?: string;
-        error?: string;
-    };
-};
+type NetworkAction = 'apply-host-vpn' | 'lock-device-vpn' | 'clear-android-proxy' | 'lock-current' | 'unlock';
 
 type NetworkEntry = {
     status: HTMLElement;
@@ -410,19 +392,28 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         details.textContent = 'Checking region';
 
         let actionButtons: HTMLButtonElement[] = [];
-        const clearButton = this.createNetworkButton('Clear proxy', () =>
-            this.changeProxy(udid, 'clear', actionButtons),
+        const hostVpnButton = this.createNetworkButton('应用并锁定宿主 VPN', () =>
+            this.runNetworkAction(udid, 'apply-host-vpn', actionButtons),
         );
-        const rebootButton = this.createNetworkButton('Restart + apply', () =>
-            this.changeProxy(udid, 'host-vpn', actionButtons, true),
+        const deviceVpnButton = this.createNetworkButton('锁定手机 VPN', () =>
+            this.runNetworkAction(udid, 'lock-device-vpn', actionButtons),
         );
-        actionButtons = [clearButton, rebootButton];
+        const lockButton = this.createNetworkButton('锁定当前出口', () =>
+            this.runNetworkAction(udid, 'lock-current', actionButtons),
+        );
+        const clearButton = this.createNetworkButton('仅清 Android 代理', () =>
+            this.runNetworkAction(udid, 'clear-android-proxy', actionButtons),
+        );
+        const unlockButton = this.createNetworkButton('解除 IP 锁定', () =>
+            this.runNetworkAction(udid, 'unlock', actionButtons),
+        );
+        actionButtons = [hostVpnButton, deviceVpnButton, lockButton, clearButton, unlockButton];
 
-        entry.append(status, details, clearButton, rebootButton);
+        entry.append(status, details, ...actionButtons);
         this.networkEntries.set(udid, {
             status,
             details,
-            buttons: [clearButton, rebootButton],
+            buttons: actionButtons,
         });
         void this.refreshNetworkStatus(udid);
         return entry;
@@ -434,7 +425,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         }
         this.networkRefreshTimer = window.setInterval(() => {
             this.networkEntries.forEach((_entry, udid) => void this.refreshNetworkStatus(udid));
-        }, 60_000);
+        }, 15_000);
     }
 
     private onVisibilityChange = (): void => {
@@ -464,62 +455,49 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             return;
         }
         try {
-            const response = await fetch(this.endpoint(`network/status?udid=${encodeURIComponent(udid)}`));
-            const result = (await response.json().catch(() => ({}))) as { status?: NetworkStatus; output?: string };
+            const response = await fetch(this.endpoint(`network/status?udid=${encodeURIComponent(udid)}&refresh=1`), {
+                cache: 'no-store',
+            });
+            const result = (await response.json().catch(() => ({}))) as {
+                status?: NetworkRouteStatus;
+                output?: string;
+            };
             if (!response.ok || !result.status) {
                 throw new Error(result.output || `Unable to read network status (${response.status})`);
             }
-            const status = result.status;
-            const verified = status.ipSource === 'emulator-network' && !!status.ip;
-            entry.status.textContent = verified ? `Emulator IP: ${status.ip}` : 'Emulator IP not verified';
-            const location = [status.country, status.region, status.city].filter(Boolean).join(' / ');
-            const checkedAt = new Date(status.checkedAt).toLocaleTimeString();
-            const proxy =
-                status.proxy && status.proxy !== ':0' ? `Android proxy: ${status.proxy}` : 'Android proxy: off';
-            const vpnLocation = [status.hostVpn.country, status.hostVpn.region, status.hostVpn.city]
-                .filter(Boolean)
-                .join(' / ');
-            const vpnText = status.hostVpn.available
-                ? `Host VPN exit: ${status.hostVpn.ip || 'IP unavailable'}${vpnLocation ? `, ${vpnLocation}` : ''}`
-                : `Host VPN: off (${status.hostVpn.error || 'unavailable'})`;
-            entry.details.textContent = `${location || 'Unknown region'} | ${proxy} | ${vpnText} | ${
-                verified ? 'verified in emulator' : 'IP not verified'
-            } | checked ${checkedAt}`;
-            entry.details.classList.toggle('network-warning', !verified || status.proxyWarning);
+            this.renderNetworkStatus(entry, result.status);
         } catch (error: unknown) {
-            entry.status.textContent = 'Emulator IP unavailable';
+            entry.status.textContent = '实际出口 IP：检测失败';
             entry.details.textContent = error instanceof Error ? error.message : 'Network status failed';
-            entry.details.classList.add('network-warning');
+            entry.details.setAttribute('data-network-tone', 'danger');
         }
     }
 
-    private async changeProxy(
-        udid: string,
-        mode: 'clear' | 'host-vpn',
-        buttons: HTMLButtonElement[],
-        reboot = false,
-    ): Promise<void> {
+    private renderNetworkStatus(entry: NetworkEntry, status: NetworkRouteStatus): void {
+        entry.status.textContent = `${statusHeadline(status)} · ${statusSummary(status).split(' | ')[1]}`;
+        entry.status.title = statusDetails(status).join('\n');
+        entry.details.textContent = statusDetails(status).join(' | ');
+        entry.details.setAttribute('data-network-tone', statusTone(status));
+    }
+
+    private async runNetworkAction(udid: string, action: NetworkAction, buttons: HTMLButtonElement[]): Promise<void> {
         buttons.forEach((button) => (button.disabled = true));
         try {
             const response = await fetch(this.endpoint('network/proxy'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ udid, mode, reboot }),
+                body: JSON.stringify({ udid, action }),
             });
-            const result = (await response.json().catch(() => ({}))) as { output?: string; rebooting?: boolean };
+            const result = (await response.json().catch(() => ({}))) as {
+                output?: string;
+                status?: NetworkRouteStatus;
+            };
             if (!response.ok) {
                 throw new Error(result.output || `Unable to change proxy (${response.status})`);
             }
             const entry = this.networkEntries.get(udid);
-            if (entry) {
-                entry.details.textContent = result.rebooting
-                    ? 'Device restarting; waiting to verify proxy...'
-                    : 'Apps stopped; proxy applied';
-            }
-            if (result.rebooting) {
-                [12_000, 24_000, 36_000].forEach((delay) => {
-                    window.setTimeout(() => void this.refreshNetworkStatus(udid), delay);
-                });
+            if (entry && result.status) {
+                this.renderNetworkStatus(entry, result.status);
             } else {
                 await this.refreshNetworkStatus(udid);
             }
@@ -527,7 +505,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             const entry = this.networkEntries.get(udid);
             if (entry) {
                 entry.details.textContent = error instanceof Error ? error.message : 'Proxy change failed';
-                entry.details.classList.add('network-warning');
+                entry.details.setAttribute('data-network-tone', 'danger');
             }
         } finally {
             buttons.forEach((button) => (button.disabled = false));
