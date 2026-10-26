@@ -112,6 +112,34 @@ emit('touchend', [touch(33, 178.5, 100.5)]);
 assert.deepStrictEqual(sent.map(message => [message.position.point.x, message.position.point.y]),
     [[540, 240], [540, 240]]);
 
+// Display changes lift existing fingers, block input during reconfiguration,
+// and require a fresh down after the new frame becomes ready.
+sent.length = 0;
+streamedSize = new Size(1344, 2080);
+Object.assign(tag, {clientWidth: 402, clientHeight: 622.14, left: 0, top: 8});
+tag.dataset.videoFit = 'contain';
+emit('touchstart', [touch(40, 100, 200), touch(41, 200, 200)]);
+handler.setSuspended(true);
+assert.deepStrictEqual(sent.map(m => m.action), [0, 0, 1, 1]);
+assert.strictEqual(handler.storedFromTouchEvent.size, 0);
+const suspendedCount = sent.length;
+emit('touchmove', [touch(40, 110, 210)]);
+emit('touchend', [touch(40, 110, 210)]);
+assert.strictEqual(sent.length, suspendedCount);
+handler.setSuspended(false);
+emit('touchmove', [touch(41, 210, 210)]);
+assert.strictEqual(sent.length, suspendedCount);
+emit('touchstart', [touch(42, 201, 319.07)]);
+emit('touchend', [touch(42, 201, 319.07)]);
+assert.deepStrictEqual(sent.slice(-2).map(m => m.action), [0, 1]);
+assert(Math.abs(sent[sent.length - 1].position.point.x - 672) < 2);
+assert(Math.abs(sent[sent.length - 1].position.point.y - 1040) < 2);
+// The area outside the video does not become a new Android touch.
+const beforeBlackBar = sent.length;
+emit('touchstart', [touch(43, 201, 1)]);
+emit('touchend', [touch(43, 201, 1)]);
+assert.strictEqual(sent.length, beforeBlackBar);
+
 handler.release();
 assert.strictEqual(tag.listeners.get('touchstart').length, 0);
 assert.strictEqual(document.body.listeners.get('mousemove').length, 0);

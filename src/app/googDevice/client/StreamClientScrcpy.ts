@@ -372,7 +372,8 @@ export class StreamClientScrcpy
 
         document.body.appendChild(deviceView);
         if (mobile) {
-            this.mobileView = new MobileStreamView(player, deviceView, video, this.controlButtons, moreBox);
+            this.mobileView = new MobileStreamView(player, deviceView, video, this.controlButtons, moreBox,
+                udid, (suspended) => this.touchHandler?.setSuspended(suspended));
         }
         this.touchDiagnostics = TouchDiagnostics.create(player.getTouchableElement(), moreBox, player.getName());
         document.addEventListener('paste', this.onPagePaste, true);

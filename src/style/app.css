@@ -496,6 +496,28 @@ body.remote-keyboard {
     background: var(--main-bg-color);
 }
 
+.mobile-display-profile {
+    margin: 12px 0;
+    max-width: 280px;
+}
+
+.mobile-display-profile button {
+    display: block;
+    width: 100%;
+    min-height: 44px;
+    margin: 8px 0;
+    font-size: 16px;
+    color: var(--button-text-color);
+    background: var(--main-bg-color);
+    border: 1px solid currentColor;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.mobile-display-profile button[hidden] { display: none; }
+.mobile-display-profile button:disabled { opacity: 0.6; }
+.mobile-display-profile p { font-size: 14px; line-height: 1.5; white-space: normal; }
+
 .mobile-stream-view .control-buttons-list {
     display: none;
     position: absolute;

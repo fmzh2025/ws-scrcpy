@@ -222,6 +222,12 @@ export abstract class InteractionHandler {
         return pointerId;
     }
 
+    protected static releasePointer(pointerId: number): void {
+        const identifier = this.pointerToIdMap.get(pointerId);
+        if (identifier !== undefined) this.idToPointerMap.delete(identifier);
+        this.pointerToIdMap.delete(pointerId);
+    }
+
     protected static buildTouchOnClient(event: CommonTouchAndMouse, screenInfo: ScreenInfo): TouchOnClient | null {
         const action = this.mapTypeToAction(event.type);
         const { width, height } = screenInfo.videoSize;

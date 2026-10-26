@@ -10,6 +10,8 @@ import * as process from 'process';
 import { EnvName } from '../EnvName';
 import { ControlCenter } from '../goog-device/services/ControlCenter';
 import { AdbRemoteAccess } from '../goog-device/services/AdbRemoteAccess';
+import { DisplayProfiles } from '../goog-device/services/DisplayProfiles';
+import { validateViewport } from '../../common/DisplayProfile';
 
 const DEFAULT_STATIC_DIR = path.join(__dirname, './public');
 
@@ -172,6 +174,44 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
     public async start(): Promise<void> {
         this.mainApp = express();
         this.mainApp.use(express.json());
+        this.mainApp.get(`${API_PREFIX}/display-profile`, async (req, res) => {
+            const udid = typeof req.query.udid === 'string' ? req.query.udid : '';
+            const device = ControlCenter.getInstance().getDevice(udid);
+            res.setHeader('Cache-Control', 'no-store');
+            if (!device?.isConnected()) return res.status(404).json({ success: false, output: '云手机未连接' });
+            try {
+                return res.json({ success: true, status: await DisplayProfiles.getInstance().status(device) });
+            } catch (error: any) {
+                return res.status(500).json({ success: false, output: error.message });
+            }
+        });
+        this.mainApp.post(`${API_PREFIX}/display-profile`, async (req, res) => {
+            // Accept only same-origin JSON, never cross-site form submissions.
+            const origin = req.get('origin');
+            let sameOrigin = !origin;
+            try { if (origin) sameOrigin = new URL(origin).host === req.get('host'); } catch (_) { /* invalid origin */ }
+            if (!req.is('application/json') || !sameOrigin) {
+                return res.status(403).json({ success: false, output: '仅允许同源 JSON 请求' });
+            }
+            const { udid, operation, viewport } = req.body || {};
+            if (typeof udid !== 'string' || !['adapt', 'restore'].includes(operation)) {
+                return res.status(400).json({ success: false, output: 'Invalid display operation' });
+            }
+            if (operation === 'adapt') {
+                try { validateViewport(viewport); } catch (error: any) {
+                    return res.status(400).json({ success: false, output: error.message });
+                }
+            }
+            const device = ControlCenter.getInstance().getDevice(udid);
+            if (!device?.isConnected()) return res.status(404).json({ success: false, output: '云手机未连接' });
+            try {
+                const service = DisplayProfiles.getInstance();
+                const status = operation === 'adapt' ? await service.adapt(device, viewport) : await service.restore(device);
+                return res.json({ success: true, status });
+            } catch (error: any) {
+                return res.status(500).json({ success: false, output: error.message });
+            }
+        });
         this.mainApp.get(ADB_STATUS_PATH, (req, res) => {
             const udid = typeof req.query.udid === 'string' ? req.query.udid : '';
             if (!udid) {

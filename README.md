@@ -45,7 +45,7 @@ See [SilkPulse integration](docs/silkpulse.md) for configuration, session switch
 
 ## Mobile display
 
-Mobile streams fill the available viewport by default, preserving the complete picture while allowing it to stretch. In the floating control menu, open More and choose **画面适配 → 保持原比例** to restore the original aspect ratio. The preference is saved in this browser. Both modes retain touch coordinate mapping; Safari's browser bars remain outside the page's usable area.
+Mobile streams always preserve their aspect ratio. Open the floating controls, choose **More → 适配当前手机** in portrait with the keyboard closed. Android's logical display height is adjusted to the current Safari area while its width and DPI are preserved. The server saves this device's default; click again when changing phones. **恢复原始屏幕** restores the configuration captured before the first adaptation. All viewers of that cloud phone share its display. Browser toolbar/keyboard changes only scale the picture and may leave black bars. See [mobile display profiles](docs/mobile-display.md) for persistence, verification and recovery.
 
 ## Supported features
 

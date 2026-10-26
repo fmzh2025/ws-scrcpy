@@ -7,6 +7,7 @@ import { TypedEmitter } from '../../common/TypedEmitter';
 import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import { ScrcpyServer } from './ScrcpyServer';
 import { Properties } from './Properties';
+import { DisplayProfiles } from './services/DisplayProfiles';
 import Timeout = NodeJS.Timeout;
 
 enum PID_DETECTION {
@@ -71,7 +72,14 @@ export class Device extends TypedEmitter<DeviceEvents> {
         }
         this.descriptor.state = state;
         this.emitUpdate();
-        this.fetchDeviceInfo();
+        if (this.connected) {
+            // Restore a saved display before starting/discovering the stream.
+            void DisplayProfiles.getInstance().reapply(this)
+                .catch((error: Error) => console.error(this.TAG, 'Display profile restore failed:', error.message))
+                .then(() => this.fetchDeviceInfo());
+        } else {
+            this.fetchDeviceInfo();
+        }
     }
 
     public isConnected(): boolean {

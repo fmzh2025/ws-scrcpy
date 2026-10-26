@@ -29,6 +29,25 @@ export class FeaturedInteractionHandler extends InteractionHandler {
     private readonly storedFromMouseEvent = new Map<number, TouchControlMessage>();
     private readonly storedFromTouchEvent = new Map<number, TouchControlMessage>();
     private lastScrollEvent?: { time: number; hScroll: number; vScroll: number };
+    private suspended = false;
+    private needsNewDown = false;
+
+    public setSuspended(suspended: boolean): void {
+        if (suspended && !this.suspended) {
+            for (const storage of [this.storedFromMouseEvent, this.storedFromTouchEvent]) {
+                storage.forEach((message) => {
+                    this.listener.sendMessage(InteractionHandler.createEmulatedMessage(MotionEvent.ACTION_UP, message));
+                    InteractionHandler.releasePointer(message.pointerId);
+                });
+                storage.clear();
+            }
+            this.lastScrollEvent = undefined;
+            this.lastPosition = undefined;
+            this.clearCanvas();
+            this.needsNewDown = true;
+        }
+        this.suspended = suspended;
+    }
 
     constructor(player: BasePlayer, public readonly listener: InteractionHandlerListener) {
         super(player, FeaturedInteractionHandler.touchEventsNames, FeaturedInteractionHandler.keyEventsNames);
@@ -57,6 +76,17 @@ export class FeaturedInteractionHandler extends InteractionHandler {
     }
 
     protected onInteraction(event: MouseEvent | TouchEvent): void {
+        if (this.suspended) {
+            if (event.target === this.tag && event.cancelable) event.preventDefault();
+            return;
+        }
+        if (this.needsNewDown && event.target === this.tag) {
+            if (event.type !== 'touchstart' && event.type !== 'mousedown') {
+                if (event.cancelable) event.preventDefault();
+                return;
+            }
+            this.needsNewDown = false;
+        }
         const screenInfo = this.player.getScreenInfo();
         if (!screenInfo) {
             TouchDiagnostics.ignored('尚未收到屏幕尺寸');
@@ -100,6 +130,7 @@ export class FeaturedInteractionHandler extends InteractionHandler {
     }
 
     protected onKey(event: KeyboardEvent): void {
+        if (this.suspended) return;
         if (!this.lastPosition) {
             return;
         }
@@ -128,6 +159,7 @@ export class FeaturedInteractionHandler extends InteractionHandler {
     };
 
     public release(): void {
+        this.setSuspended(true);
         super.release();
         this.tag.removeEventListener('mouseleave', this.onMouseLeave);
         this.tag.removeEventListener('mouseenter', this.onMouseEnter);
