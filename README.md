@@ -92,6 +92,33 @@ Drag & drop an APK file to push it to the `/data/local/tmp` directory. You can
 install it manually from the included [xtermjs/xterm.js][xterm.js] terminal
 emulator (see below).
 
+#### Network route and IP protection
+
+The device list and stream toolbar show an IP panel whose primary value is
+measured from inside the Android network stack. It separately reports the host
+default exit, host VPN exit, Android HTTP proxy and Android VPN state, then
+classifies the active route as host VPN, device VPN, host direct or unknown.
+
+* **Apply and lock host VPN** stops third-party Android apps before changing the
+  route, dynamically relays to the current host system proxy and locks the
+  verified emulator exit IP.
+* **Lock device VPN** is available after a full-device Android VPN app is
+  installed, authorized and connected. The VPN app is kept running while other
+  third-party apps are stopped. This keeps its exit independent from host VPN
+  node changes.
+* When a locked IP or route changes, the server stops third-party apps and, on
+  rooted emulators, adds an Android firewall guard until a verified route is
+  accepted again.
+* Detection continues on the server and the lock state is stored under
+  `~/.ws-scrcpy/network-route-state.json`, so hiding or refreshing the browser
+  does not disable drift protection.
+
+Relevant environment variables are `WS_SCRCPY_HOST_VPN_PROXY` (the proxy
+address visible to Android, default `10.0.2.2:7898`),
+`WS_SCRCPY_HOST_VPN_UPSTREAM` (optional explicit host proxy),
+`WS_SCRCPY_HOST_VPN_RELAY_BIND`, `WS_SCRCPY_HOST_VPN_RELAY_PORT`, and
+`WS_SCRCPY_NETWORK_MONITOR_MS`.
+
 #### Remote shell
 Control your device from `adb shell` in your browser.
 

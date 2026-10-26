@@ -7,6 +7,7 @@ import '../../../vendor/ws-scrcpy/ip-probe.jar';
 import { NetInterface } from '../../types/NetInterface';
 import { TypedEmitter } from '../../common/TypedEmitter';
 import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
+import { AndroidVpnStatus } from '../../types/NetworkRouteStatus';
 import { ScrcpyServer } from './ScrcpyServer';
 import { Properties } from './Properties';
 import Timeout = NodeJS.Timeout;
@@ -22,6 +23,18 @@ enum PID_DETECTION {
 export interface DeviceEvents {
     update: Device;
 }
+
+export type NetworkGuardResult = {
+    enabled: boolean;
+    supported: boolean;
+    protectedPackages: number;
+    error?: string;
+};
+
+type ThirdPartyPackage = {
+    name: string;
+    uid?: number;
+};
 
 export class Device extends TypedEmitter<DeviceEvents> {
     private static readonly INITIAL_UPDATE_TIMEOUT = 1500;
@@ -180,14 +193,67 @@ export class Device extends TypedEmitter<DeviceEvents> {
         return this.runShellCommandAdbKit('settings get global http_proxy');
     }
 
+    public async getAndroidVpnStatus(): Promise<AndroidVpnStatus> {
+        if (!this.connected) {
+            throw new Error(`Device "${this.udid}" is not connected`);
+        }
+        try {
+            const [connectivity, alwaysOnValue, lockdownValue] = await Promise.all([
+                this.runShellCommandAdbKit('dumpsys connectivity'),
+                this.runShellCommandAdbKit('settings get secure always_on_vpn_app'),
+                this.runShellCommandAdbKit('settings get secure always_on_vpn_lockdown'),
+            ]);
+            const activeNetworkMatch = connectivity.match(/Active default network:\s*(\d+)/);
+            const activeNetworkId = activeNetworkMatch ? activeNetworkMatch[1] : undefined;
+            const currentNetworks = connectivity.split('Current Networks:')[1] || '';
+            const networkBlocks = currentNetworks.split(/\n(?=  NetworkAgentInfo\{network\{)/);
+            const vpnBlocks = networkBlocks.filter((block) => /\bTransports:\s*VPN\b/.test(block));
+            const activeVpnBlock = vpnBlocks.find((block) => {
+                const id = block.match(/NetworkAgentInfo\{network\{(\d+)\}/);
+                return !!id && id[1] === activeNetworkId;
+            });
+            const vpnBlock = activeVpnBlock || vpnBlocks[0];
+            const ownerUidMatch = vpnBlock ? vpnBlock.match(/\bOwnerUid:\s*(\d+)/) : undefined;
+            const uid = ownerUidMatch ? parseInt(ownerUidMatch[1], 10) : undefined;
+            let packageName: string | undefined;
+            if (typeof uid === 'number') {
+                const packages = await this.runShellCommandAdbKit('pm list packages -U');
+                const packageLine = packages
+                    .split('\n')
+                    .find((line) => new RegExp(`\\buid:${uid}\\s*$`).test(line.trim()));
+                const packageMatch = packageLine ? packageLine.match(/^package:([^\s]+)\s+uid:/) : undefined;
+                packageName = packageMatch ? packageMatch[1] : undefined;
+            }
+            const interfaceMatch = vpnBlock ? vpnBlock.match(/\bInterfaceName:\s*([^\s,}\]]+)/) : undefined;
+            const alwaysOnPackage = !alwaysOnValue || alwaysOnValue === 'null' ? undefined : alwaysOnValue;
+            return {
+                active: vpnBlocks.length > 0,
+                isDefault: !!activeVpnBlock,
+                packageName,
+                uid,
+                interfaceName: interfaceMatch ? interfaceMatch[1] : undefined,
+                alwaysOnPackage,
+                lockdown: lockdownValue === '1' || lockdownValue === 'true',
+            };
+        } catch (error: unknown) {
+            return {
+                active: false,
+                isDefault: false,
+                lockdown: false,
+                error: error instanceof Error ? error.message : 'Unable to inspect Android VPN state',
+            };
+        }
+    }
+
     public async getExternalNetworkStatus(): Promise<string> {
         if (!this.connected) {
             throw new Error(`Device "${this.udid}" is not connected`);
         }
         await this.ensureIpProbe();
+        const target = `${Device.IP_PROBE_URL}?_ws_scrcpy=${Date.now()}`;
         const output = await this.runShellCommandAdbKit(
             `CLASSPATH=${Device.shellQuote(Device.IP_PROBE_REMOTE_PATH)} app_process / IpProbe ${Device.shellQuote(
-                Device.IP_PROBE_URL,
+                target,
             )}`,
         );
         const match = output.match(/^(\d{3})\t([\s\S]*)$/);
@@ -229,27 +295,114 @@ export class Device extends TypedEmitter<DeviceEvents> {
         }
     }
 
-    public async setGlobalProxy(proxy?: string): Promise<{ proxy: string; stoppedPackages: number }> {
+    public async listThirdPartyPackages(): Promise<ThirdPartyPackage[]> {
         if (!this.connected) {
             throw new Error(`Device "${this.udid}" is not connected`);
         }
-        const packageOutput = await this.runShellCommandAdbKit('pm list packages -3 2>/dev/null');
-        const packages = packageOutput
+        const packageOutput = await this.runShellCommandAdbKit('pm list packages -3 -U 2>/dev/null');
+        return packageOutput
             .split('\n')
-            .map((line) => line.trim().replace(/^package:/, ''))
-            .filter((name) => /^[A-Za-z0-9._]+$/.test(name));
+            .map((line) => line.trim().match(/^package:([A-Za-z0-9._]+)(?:\s+uid:(\d+))?$/))
+            .filter((match): match is RegExpMatchArray => !!match)
+            .map((match) => ({ name: match[1], uid: match[2] ? parseInt(match[2], 10) : undefined }));
+    }
+
+    public async stopThirdPartyApps(excludedPackages: string[] = []): Promise<number> {
+        const excluded = new Set(excludedPackages);
+        const packages = (await this.listThirdPartyPackages()).filter(({ name }) => !excluded.has(name));
         if (packages.length) {
             await this.runShellCommandAdbKit(
-                packages.map((name) => `am force-stop ${Device.shellQuote(name)}`).join('; '),
+                packages.map(({ name }) => `am force-stop ${Device.shellQuote(name)}`).join('; '),
             );
         }
+        return packages.length;
+    }
+
+    public async setGlobalProxy(
+        proxy?: string,
+        stopApps = true,
+        excludedPackages: string[] = [],
+    ): Promise<{ proxy: string; stoppedPackages: number }> {
+        if (!this.connected) {
+            throw new Error(`Device "${this.udid}" is not connected`);
+        }
+        const stoppedPackages = stopApps ? await this.stopThirdPartyApps(excludedPackages) : 0;
         const value = proxy || ':0';
         await this.runShellCommandAdbKit(`settings put global http_proxy ${Device.shellQuote(value)}`);
         const applied = await this.getGlobalProxy();
         if (applied !== value) {
             throw new Error(`Proxy verification failed: expected "${value}", got "${applied || '(empty)'}"`);
         }
-        return { proxy: applied, stoppedPackages: packages.length };
+        return { proxy: applied, stoppedPackages };
+    }
+
+    public async setNetworkGuard(enabled: boolean, excludedPackages: string[] = []): Promise<NetworkGuardResult> {
+        if (!this.connected) {
+            throw new Error(`Device "${this.udid}" is not connected`);
+        }
+        const chain = 'WS_SCRCPY_GUARD';
+        const cleanup = (binary: string): string =>
+            `${binary} -D OUTPUT -j ${chain} 2>/dev/null || true; ` +
+            `${binary} -F ${chain} 2>/dev/null || true; ${binary} -X ${chain} 2>/dev/null || true`;
+        const packages = await this.listThirdPartyPackages();
+        const excluded = new Set(excludedPackages);
+        const protectedUids = Array.from(
+            new Set(
+                packages
+                    .filter(({ name, uid }) => !excluded.has(name) && typeof uid === 'number')
+                    .map(({ uid }) => uid as number),
+            ),
+        );
+        const commands = [
+            cleanup('iptables'),
+            'command -v ip6tables >/dev/null 2>&1 && { ' + cleanup('ip6tables') + '; }',
+        ];
+        if (enabled) {
+            const rules = protectedUids.map((uid) => `iptables -A ${chain} -m owner --uid-owner ${uid} -j REJECT`);
+            const rulesV6 = protectedUids.map((uid) => `ip6tables -A ${chain} -m owner --uid-owner ${uid} -j REJECT`);
+            const ip6Rules = rulesV6.length ? `${rulesV6.join('; ')}; ` : '';
+            commands.push(
+                `iptables -N ${chain}`,
+                ...rules,
+                `iptables -I OUTPUT 1 -j ${chain}`,
+                `command -v ip6tables >/dev/null 2>&1 && { ip6tables -N ${chain}; ${ip6Rules}ip6tables -I OUTPUT 1 -j ${chain}; }`,
+            );
+        }
+        commands.push('echo __WS_SCRCPY_GUARD_OK__');
+        try {
+            const output = await this.runShellCommandAdbKit(`su 0 sh -c ${Device.shellQuote(commands.join('; '))}`);
+            if (!output.includes('__WS_SCRCPY_GUARD_OK__')) {
+                throw new Error(output || 'Root command did not complete');
+            }
+            return {
+                enabled,
+                supported: true,
+                protectedPackages: packages.filter(({ name }) => !excluded.has(name)).length,
+            };
+        } catch (error: unknown) {
+            return {
+                enabled: false,
+                supported: false,
+                protectedPackages: 0,
+                error: error instanceof Error ? error.message : 'Root network guard is unavailable',
+            };
+        }
+    }
+
+    public async isNetworkGuardEnabled(): Promise<boolean> {
+        if (!this.connected) {
+            return false;
+        }
+        try {
+            const output = await this.runShellCommandAdbKit(
+                `su 0 sh -c ${Device.shellQuote(
+                    'iptables -C OUTPUT -j WS_SCRCPY_GUARD >/dev/null 2>&1 && echo active || echo inactive',
+                )}`,
+            );
+            return output.trim() === 'active';
+        } catch (_error) {
+            return false;
+        }
     }
 
     public async push(contents: string, path: string): Promise<PushTransfer> {

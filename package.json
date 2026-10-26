@@ -12,9 +12,10 @@
     "postinstall": "node scripts/setup-appium.js",
     "lint": "eslint src/ --ext .ts",
     "format": "eslint src/ --fix --ext .ts",
-    "test": "npm run test:video-queue && npm run test:websocket-proxy-metrics",
+    "test": "npm run test:video-queue && npm run test:websocket-proxy-metrics && npm run test:network-route",
     "test:video-queue": "node scripts/test-bounded-frame-queue.js",
-    "test:websocket-proxy-metrics": "node scripts/test-websocket-proxy-metrics.js"
+    "test:websocket-proxy-metrics": "node scripts/test-websocket-proxy-metrics.js",
+    "test:network-route": "node scripts/test-network-route-classifier.js"
   },
   "author": "Sergey Volkov <drauggres@gmail.com>",
   "license": "MIT",
