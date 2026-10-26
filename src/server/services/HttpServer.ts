@@ -23,6 +23,12 @@ const ADB_STATUS_PATH = `${API_PREFIX}/adb/status`;
 const ADB_TOGGLE_PATH = `${API_PREFIX}/adb/toggle`;
 const ADB_COMMAND_PATH = `${API_PREFIX}/adb/command`;
 const STREAM_METRICS_PATH = `${API_PREFIX}/stream/metrics`;
+const NETWORK_STATUS_PATH = `${API_PREFIX}/network/status`;
+const NETWORK_PROXY_PATH = `${API_PREFIX}/network/proxy`;
+const DEFAULT_ANDROID_PROXY = process.env.WS_SCRCPY_ANDROID_PROXY || '';
+// This is the relay exposed by the remote emulator host and forwarded to the
+// host VPN. Override it when the deployment uses a different tunnel.
+const HOST_VPN_PROXY = process.env.WS_SCRCPY_HOST_VPN_PROXY || '192.168.31.16:7898';
 
 const ADB_OPERATIONS = new Set([
     'devices',
@@ -110,6 +116,135 @@ function parseAdbCommand(command: string, udid: string): string[] {
     return args;
 }
 
+type ExternalNetworkStatus = {
+    ip?: string;
+    country?: string;
+    countryCode?: string;
+    region?: string;
+    city?: string;
+    isp?: string;
+    checkedAt: number;
+};
+
+type IpWhoIsResponse = {
+    success?: boolean;
+    ip?: string;
+    country?: string;
+    country_code?: string;
+    region?: string;
+    city?: string;
+    connection?: { isp?: string };
+};
+
+type HostVpnStatus = ExternalNetworkStatus & {
+    available: boolean;
+    proxy: string;
+    error?: string;
+};
+
+const externalNetworkStatusCache: Map<string, ExternalNetworkStatus> = new Map();
+const externalNetworkStatusPromises: Map<string, Promise<ExternalNetworkStatus>> = new Map();
+
+function parseIpWhoIsResponse(body: string, source: string): ExternalNetworkStatus {
+    let data: IpWhoIsResponse;
+    try {
+        data = JSON.parse(body) as IpWhoIsResponse;
+    } catch (_error) {
+        throw new Error(`${source} returned invalid JSON`);
+    }
+    if (data.success === false || !data.ip) {
+        throw new Error(`${source} did not return a public IP`);
+    }
+    return {
+        ip: data.ip,
+        country: data.country,
+        countryCode: data.country_code,
+        region: data.region,
+        city: data.city,
+        isp: data.connection?.isp,
+        checkedAt: Date.now(),
+    };
+}
+
+function requestExternalNetworkStatus(proxy?: string, useCache = true): Promise<ExternalNetworkStatus> {
+    const cacheKey = proxy || 'direct';
+    const cached = externalNetworkStatusCache.get(cacheKey);
+    if (useCache && cached && Date.now() - cached.checkedAt < 60_000) {
+        return Promise.resolve(cached);
+    }
+    const pending = externalNetworkStatusPromises.get(cacheKey);
+    if (pending) {
+        return pending;
+    }
+    const requestUrl = 'http://ipwho.is/';
+    const requestOptions = proxy
+        ? (() => {
+              const [hostname, portString] = proxy.split(':');
+              return {
+                  hostname,
+                  port: parseInt(portString, 10),
+                  path: requestUrl,
+                  headers: { Host: 'ipwho.is' },
+                  timeout: 10_000,
+              };
+          })()
+        : undefined;
+    const requestPromise = new Promise<ExternalNetworkStatus>((resolve, reject) => {
+        const request = proxy
+            ? http.get(requestOptions as http.RequestOptions, handleResponse)
+            : https.get('https://ipwho.is/', { timeout: 10_000 }, handleResponse);
+
+        function handleResponse(response: http.IncomingMessage): void {
+            let body = '';
+            response.setEncoding('utf8');
+            response.on('data', (chunk) => (body += chunk));
+            response.on('end', () => {
+                try {
+                    if (response.statusCode !== 200) {
+                        throw new Error(`External IP lookup failed (${response.statusCode || 'unknown'})`);
+                    }
+                    const status = parseIpWhoIsResponse(body, 'Host network lookup');
+                    externalNetworkStatusCache.set(cacheKey, status);
+                    resolve(status);
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        }
+        request.on('error', reject);
+        request.on('timeout', () => request.destroy(new Error('External IP lookup timed out')));
+    }).finally(() => {
+        externalNetworkStatusPromises.delete(cacheKey);
+    });
+    externalNetworkStatusPromises.set(cacheKey, requestPromise);
+    return requestPromise;
+}
+
+async function requestHostVpnStatus(): Promise<HostVpnStatus> {
+    try {
+        const [network, direct] = await Promise.all([
+            requestExternalNetworkStatus(HOST_VPN_PROXY, false),
+            requestExternalNetworkStatus(undefined, false),
+        ]);
+        if (network.ip && direct.ip && network.ip === direct.ip) {
+            return {
+                ...network,
+                available: false,
+                proxy: HOST_VPN_PROXY,
+                error: 'Host VPN proxy is reachable, but its exit IP matches the direct network',
+            };
+        }
+        return { ...network, available: true, proxy: HOST_VPN_PROXY };
+    } catch (error: unknown) {
+        return {
+            available: false,
+            proxy: HOST_VPN_PROXY,
+            checkedAt: Date.now(),
+            error: error instanceof Error ? error.message : 'Host VPN proxy unavailable',
+        };
+    }
+}
+
 export type ServerAndPort = {
     server: https.Server | http.Server;
     port: number;
@@ -193,6 +328,71 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
                 generatedAt: Date.now(),
                 streams: WebsocketProxy.getMetrics(),
             });
+        });
+        this.mainApp.get(NETWORK_STATUS_PATH, async (req, res) => {
+            const udid = typeof req.query.udid === 'string' ? req.query.udid : '';
+            if (!udid) {
+                return res.status(400).json({ success: false, output: 'udid is required' });
+            }
+            const device = ControlCenter.getInstance().getDevice(udid);
+            if (!device) {
+                return res.status(404).json({ success: false, output: `Device "${udid}" was not found` });
+            }
+            try {
+                const [proxy, emulatorResponse] = await Promise.all([
+                    device.getGlobalProxy(),
+                    device.getExternalNetworkStatus(),
+                ]);
+                const network = parseIpWhoIsResponse(emulatorResponse, 'Emulator network probe');
+                const hostVpn = await requestHostVpnStatus();
+                return res.json({
+                    success: true,
+                    status: {
+                        ...network,
+                        ipSource: 'emulator-network',
+                        proxy,
+                        configuredProxy: DEFAULT_ANDROID_PROXY,
+                        proxyWarning: proxy.length > 0 && proxy !== ':0',
+                        hostVpn,
+                    },
+                });
+            } catch (error: unknown) {
+                const output = error instanceof Error ? error.message : 'Unable to read network status';
+                return res.status(502).json({ success: false, output });
+            }
+        });
+        this.mainApp.post(NETWORK_PROXY_PATH, async (req, res) => {
+            const { udid, mode, reboot } = req.body || {};
+            if (typeof udid !== 'string' || (mode !== 'clear' && mode !== 'host-vpn')) {
+                return res.status(400).json({ success: false, output: 'udid and mode are required' });
+            }
+            let targetProxy: string | undefined;
+            if (mode === 'host-vpn') {
+                const hostVpn = await requestHostVpnStatus();
+                if (!hostVpn.available) {
+                    return res.status(503).json({
+                        success: false,
+                        output: `Host VPN is unavailable via ${HOST_VPN_PROXY}`,
+                        hostVpn,
+                    });
+                }
+                targetProxy = HOST_VPN_PROXY;
+            }
+            const device = ControlCenter.getInstance().getDevice(udid);
+            if (!device) {
+                return res.status(404).json({ success: false, output: `Device "${udid}" was not found` });
+            }
+            try {
+                const result = await device.setGlobalProxy(targetProxy);
+                if (reboot === true) {
+                    // Let the HTTP response reach the browser before the device drops ADB.
+                    setTimeout(() => void device.runShellCommandAdbKit('reboot'), 250);
+                }
+                return res.json({ success: true, rebooting: reboot === true, status: result });
+            } catch (error: unknown) {
+                const output = error instanceof Error ? error.message : 'Unable to change device proxy';
+                return res.status(500).json({ success: false, output });
+            }
         });
         this.mainApp.post(ADB_TOGGLE_PATH, async (req, res) => {
             const { udid, enabled } = req.body || {};

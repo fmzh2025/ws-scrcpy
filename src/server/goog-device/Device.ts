@@ -2,6 +2,8 @@ import { AdbExtended } from './adb';
 import AdbKitClient from '@dead50f7/adbkit/lib/adb/client';
 import PushTransfer from '@dead50f7/adbkit/lib/adb/sync/pushtransfer';
 import { spawn } from 'child_process';
+import path from 'path';
+import '../../../vendor/ws-scrcpy/ip-probe.jar';
 import { NetInterface } from '../../types/NetInterface';
 import { TypedEmitter } from '../../common/TypedEmitter';
 import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
@@ -26,9 +28,15 @@ export class Device extends TypedEmitter<DeviceEvents> {
     private static readonly MAX_UPDATES_COUNT = 7;
     private static readonly SAFE_APK_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.apk$/i;
     private static readonly SAFE_UPLOADED_FILE_NAME = /^(?!\.{1,2}$)[^/\\\0]{1,240}$/;
-    private static readonly RESERVED_UPLOAD_FILE_NAMES = new Set(['scrcpy-server.jar', 'ws_scrcpy.pid']);
+    private static readonly RESERVED_UPLOAD_FILE_NAMES = new Set([
+        'scrcpy-server.jar',
+        'ws_scrcpy.pid',
+        'ws-scrcpy-ip-probe.jar',
+    ]);
     private static readonly TEMP_PATH = '/data/local/tmp/';
     private static readonly DOWNLOAD_PATH = '/sdcard/Download/';
+    private static readonly IP_PROBE_REMOTE_PATH = `${Device.TEMP_PATH}ws-scrcpy-ip-probe.jar`;
+    private static readonly IP_PROBE_URL = 'https://ipwho.is/';
     private connected = true;
     private pidDetectionVariant: PID_DETECTION = PID_DETECTION.UNKNOWN;
     private client: AdbKitClient;
@@ -44,6 +52,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
     private updateCount = 0;
     private throttleTimeoutId?: Timeout;
     private lastEmit = 0;
+    private ipProbeReady?: Promise<void>;
     public readonly TAG: string;
     public readonly descriptor: GoogDeviceDescriptor;
 
@@ -69,10 +78,14 @@ export class Device extends TypedEmitter<DeviceEvents> {
 
     public setState(state: string): void {
         if (state === 'device') {
+            if (!this.connected) {
+                this.ipProbeReady = undefined;
+            }
             this.connected = true;
             this.properties = undefined;
         } else {
             this.connected = false;
+            this.ipProbeReady = undefined;
         }
         this.descriptor.state = state;
         this.emitUpdate();
@@ -158,6 +171,85 @@ export class Device extends TypedEmitter<DeviceEvents> {
             .shell(this.udid, command)
             .then(AdbExtended.util.readAll)
             .then((output: Buffer) => output.toString().trim());
+    }
+
+    public async getGlobalProxy(): Promise<string> {
+        if (!this.connected) {
+            throw new Error(`Device "${this.udid}" is not connected`);
+        }
+        return this.runShellCommandAdbKit('settings get global http_proxy');
+    }
+
+    public async getExternalNetworkStatus(): Promise<string> {
+        if (!this.connected) {
+            throw new Error(`Device "${this.udid}" is not connected`);
+        }
+        await this.ensureIpProbe();
+        const output = await this.runShellCommandAdbKit(
+            `CLASSPATH=${Device.shellQuote(Device.IP_PROBE_REMOTE_PATH)} app_process / IpProbe ${Device.shellQuote(
+                Device.IP_PROBE_URL,
+            )}`,
+        );
+        const match = output.match(/^(\d{3})\t([\s\S]*)$/);
+        if (!match) {
+            throw new Error(`Emulator IP probe returned invalid output: ${output.slice(0, 200) || '(empty)'}`);
+        }
+        const statusCode = parseInt(match[1], 10);
+        if (statusCode !== 200 || !match[2]) {
+            throw new Error(`Emulator IP probe failed (${statusCode || 'unknown'})`);
+        }
+        return match[2];
+    }
+
+    private async ensureIpProbe(): Promise<void> {
+        if (!this.ipProbeReady) {
+            this.ipProbeReady = this.ensureIpProbeInternal().catch((error: unknown) => {
+                this.ipProbeReady = undefined;
+                throw error;
+            });
+        }
+        return this.ipProbeReady;
+    }
+
+    private async ensureIpProbeInternal(): Promise<void> {
+        const remotePath = Device.IP_PROBE_REMOTE_PATH;
+        // Always replace the device copy once per service process so a stale
+        // probe left by an earlier deployment cannot change the result.
+        const sourcePath = path.join(__dirname, 'vendor/ws-scrcpy/ip-probe.jar');
+        const transfer = await this.push(sourcePath, remotePath);
+        await new Promise<void>((resolve, reject) => {
+            transfer.once('end', resolve);
+            transfer.once('error', reject);
+        });
+        const verified = await this.runShellCommandAdbKit(
+            `test -s ${Device.shellQuote(remotePath)} && echo ready || echo missing`,
+        );
+        if (verified.trim() !== 'ready') {
+            throw new Error('Unable to install the emulator IP probe');
+        }
+    }
+
+    public async setGlobalProxy(proxy?: string): Promise<{ proxy: string; stoppedPackages: number }> {
+        if (!this.connected) {
+            throw new Error(`Device "${this.udid}" is not connected`);
+        }
+        const packageOutput = await this.runShellCommandAdbKit('pm list packages -3 2>/dev/null');
+        const packages = packageOutput
+            .split('\n')
+            .map((line) => line.trim().replace(/^package:/, ''))
+            .filter((name) => /^[A-Za-z0-9._]+$/.test(name));
+        if (packages.length) {
+            await this.runShellCommandAdbKit(
+                packages.map((name) => `am force-stop ${Device.shellQuote(name)}`).join('; '),
+            );
+        }
+        const value = proxy || ':0';
+        await this.runShellCommandAdbKit(`settings put global http_proxy ${Device.shellQuote(value)}`);
+        const applied = await this.getGlobalProxy();
+        if (applied !== value) {
+            throw new Error(`Proxy verification failed: expected "${value}", got "${applied || '(empty)'}"`);
+        }
+        return { proxy: applied, stoppedPackages: packages.length };
     }
 
     public async push(contents: string, path: string): Promise<PushTransfer> {
