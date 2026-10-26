@@ -153,11 +153,46 @@ body.list #device_list_menu {
 
 #devices .device-list div.desc-block.stream,
 #devices .device-list div.desc-block.server_pid,
-#devices .device-list div.desc-block.net_interface {
+#devices .device-list div.desc-block.net_interface,
+#devices .device-list div.desc-block.network-status {
     border: 1px solid var(--device-border-color);
     border-radius: .3em;
     overflow: hidden;
     white-space: nowrap;
+}
+
+#devices .device-list div.desc-block.network-status {
+    align-items: center;
+    gap: .45em;
+    padding: .15em .35em;
+    flex-wrap: wrap;
+    white-space: normal;
+}
+
+#devices .network-ip {
+    color: var(--text-color);
+}
+
+#devices .network-details {
+    color: var(--text-color-light);
+}
+
+#devices .network-details.network-warning {
+    color: hsl(35, 80%, 42%);
+}
+
+#devices .network-action {
+    padding: .2em .45em;
+    border: 1px solid var(--button-border-color);
+    border-radius: .25em;
+    color: var(--button-text-color);
+    background: var(--main-bg-color);
+    cursor: pointer;
+}
+
+#devices .network-action:disabled {
+    opacity: .55;
+    cursor: wait;
 }
 
 #devices .device-list div.device div.desc-block.stream button.action-button {

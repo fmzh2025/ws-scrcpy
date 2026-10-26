@@ -32,6 +32,7 @@ import { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
 import { ScrcpyFilePushStream } from '../filePush/ScrcpyFilePushStream';
 import { InlineKeyboardOverlay } from '../InlineKeyboardOverlay';
 import { AdbOverlay } from './AdbOverlay';
+import { NetworkControlPanel } from './NetworkControlPanel';
 import { DeviceState } from '../../../common/DeviceState';
 
 type StartParams = {
@@ -66,6 +67,7 @@ export class StreamClientScrcpy
     private pasteStatusTimeout?: number;
     private inlineKeyboard?: InlineKeyboardOverlay;
     private adbOverlay?: AdbOverlay;
+    private networkPanel?: NetworkControlPanel;
     private readonly streamReceiver: StreamReceiverScrcpy;
 
     public static registerPlayer(playerClass: PlayerClass): void {
@@ -317,6 +319,8 @@ export class StreamClientScrcpy
             this.inlineKeyboard = undefined;
             this.adbOverlay?.release();
             this.adbOverlay = undefined;
+            this.networkPanel?.release();
+            this.networkPanel = undefined;
             this.removePagePasteHandler();
         };
 
@@ -328,6 +332,8 @@ export class StreamClientScrcpy
         });
         this.controlButtons = googToolBox.getHolderElement();
         deviceView.appendChild(this.controlButtons);
+        this.networkPanel = new NetworkControlPanel(udid);
+        this.controlButtons.appendChild(this.networkPanel.getElement());
         const video = document.createElement('div');
         video.className = 'video';
         deviceView.appendChild(video);
