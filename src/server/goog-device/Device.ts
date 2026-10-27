@@ -7,7 +7,7 @@ import '../../../vendor/ws-scrcpy/ip-probe.jar';
 import { NetInterface } from '../../types/NetInterface';
 import { TypedEmitter } from '../../common/TypedEmitter';
 import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
-import { AndroidVpnStatus } from '../../types/NetworkRouteStatus';
+import { AndroidVpnStatus, NetworkGuardReadStatus } from '../../types/NetworkRouteStatus';
 import { ScrcpyServer } from './ScrcpyServer';
 import { Properties } from './Properties';
 import { DisplayProfiles } from './services/DisplayProfiles';
@@ -35,7 +35,9 @@ export type NetworkGuardResult = {
 
 export type NetworkGuardState = {
     enabled: boolean;
+    status: NetworkGuardReadStatus;
     allowedProxy?: string;
+    error?: string;
 };
 
 type ThirdPartyPackage = {
@@ -199,6 +201,21 @@ export class Device extends TypedEmitter<DeviceEvents> {
             .shell(this.udid, command)
             .then(AdbExtended.util.readAll)
             .then((output: Buffer) => output.toString().trim());
+    }
+
+    private async runShellCommandWithExitCode(command: string): Promise<{ output: string; exitCode: number }> {
+        const marker = `__WS_SCRCPY_EXIT_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}__`;
+        const result = await this.runShellCommandAdbKit(`${command}; echo ${marker}$?`);
+        const lines = result.split('\n');
+        const markerIndex = lines.findIndex((line) => line.startsWith(marker));
+        if (markerIndex === -1) {
+            throw new Error(`Android shell command did not report its exit code: ${command}`);
+        }
+        const exitCode = parseInt(lines[markerIndex].slice(marker.length), 10);
+        if (!Number.isFinite(exitCode)) {
+            throw new Error(`Android shell command returned an invalid exit code: ${command}`);
+        }
+        return { output: lines.slice(0, markerIndex).join('\n').trim(), exitCode };
     }
 
     public async getGlobalProxy(): Promise<string> {
@@ -441,33 +458,46 @@ export class Device extends TypedEmitter<DeviceEvents> {
 
     public async getNetworkGuardState(): Promise<NetworkGuardState> {
         if (!this.connected) {
-            return { enabled: false };
+            return { enabled: false, status: 'unavailable', error: `Device "${this.udid}" is not connected` };
         }
-        try {
-            const chain = 'WS_SCRCPY_GUARD';
-            const proxySetting = 'ws_scrcpy_guard_proxy';
-            const [chainRules, outputRules, proxyMarker] = await Promise.all([
-                this.runShellCommandAdbKit(`su 0 iptables -S ${chain} 2>/dev/null`),
-                this.runShellCommandAdbKit('su 0 iptables -S OUTPUT 2>/dev/null'),
-                this.runShellCommandAdbKit(`settings get global ${proxySetting}`),
-            ]);
-            const hooked = outputRules.split('\n').some((line) => line.trim() === `-A OUTPUT -j ${chain}`);
-            if (!hooked) {
-                return { enabled: false };
+        const chain = 'WS_SCRCPY_GUARD';
+        const proxySetting = 'ws_scrcpy_guard_proxy';
+        let lastError = 'Unable to inspect the Android network guard';
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            try {
+                const [chainProbe, outputProbe, proxyProbe] = await Promise.all([
+                    this.runShellCommandWithExitCode(`su 0 iptables -S ${chain} 2>/dev/null`),
+                    this.runShellCommandWithExitCode('su 0 iptables -S OUTPUT 2>/dev/null'),
+                    this.runShellCommandWithExitCode(`settings get global ${proxySetting}`),
+                ]);
+                if (outputProbe.exitCode !== 0 || proxyProbe.exitCode !== 0) {
+                    throw new Error(
+                        `Network guard query failed (OUTPUT=${outputProbe.exitCode}, settings=${proxyProbe.exitCode})`,
+                    );
+                }
+                const hooked = outputProbe.output.split('\n').some((line) => line.trim() === `-A OUTPUT -j ${chain}`);
+                if (chainProbe.exitCode !== 0 || !hooked) {
+                    return { enabled: false, status: 'missing' };
+                }
+                const proxyLine = chainProbe.output
+                    .split('\n')
+                    .find((line) => line.includes('--dport') && line.includes('-j RETURN'));
+                const proxyAddress = proxyLine?.match(/-d (\d{1,3}(?:\.\d{1,3}){3})(?:\/32)?\b/)?.[1];
+                const proxyPort = proxyLine?.match(/--dport (\d+)\b/)?.[1];
+                const markedProxy = /^(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})$/.test(proxyProbe.output)
+                    ? proxyProbe.output
+                    : undefined;
+                return {
+                    enabled: true,
+                    status: 'active',
+                    allowedProxy:
+                        markedProxy || (proxyAddress && proxyPort ? `${proxyAddress}:${proxyPort}` : undefined),
+                };
+            } catch (error: unknown) {
+                lastError = error instanceof Error ? error.message : 'Unable to inspect the Android network guard';
             }
-            const proxyLine = chainRules
-                .split('\n')
-                .find((line) => line.includes('--dport') && line.includes('-j RETURN'));
-            const proxyAddress = proxyLine?.match(/-d (\d{1,3}(?:\.\d{1,3}){3})(?:\/32)?\b/)?.[1];
-            const proxyPort = proxyLine?.match(/--dport (\d+)\b/)?.[1];
-            const markedProxy = /^(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})$/.test(proxyMarker) ? proxyMarker : undefined;
-            return {
-                enabled: true,
-                allowedProxy: markedProxy || (proxyAddress && proxyPort ? `${proxyAddress}:${proxyPort}` : undefined),
-            };
-        } catch (_error) {
-            return { enabled: false };
         }
+        return { enabled: false, status: 'unavailable', error: lastError };
     }
 
     public async push(contents: string, path: string): Promise<PushTransfer> {

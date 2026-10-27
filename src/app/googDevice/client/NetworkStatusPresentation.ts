@@ -33,6 +33,13 @@ export function statusTone(status: NetworkRouteStatus): NetworkStatusTone {
     if (status.protection.drifted || blockingGuard || !status.ip) {
         return 'danger';
     }
+    if (
+        status.protection.guardMode === 'proxy-only' &&
+        status.protection.guardStatus &&
+        status.protection.guardStatus !== 'active'
+    ) {
+        return 'warning';
+    }
     if (status.route === 'device-vpn' && !status.androidVpn.lockdown) {
         return 'warning';
     }
@@ -69,7 +76,11 @@ export function statusVerification(status: NetworkRouteStatus): string {
             : '验证结果：检测到手机 VPN，但它不是全局默认网络';
     }
     if (status.route === 'host-direct') {
-        if (status.protection.enabled && status.protection.guardMode === 'proxy-only') {
+        if (
+            status.protection.enabled &&
+            status.protection.guardMode === 'proxy-only' &&
+            status.protection.guardStatus === 'active'
+        ) {
             return status.hostVpn.active
                 ? '验证结果：宿主 VPN 已开启，但云手机经物理网络直连，未使用该 VPN'
                 : '验证结果：云手机经宿主物理网络直连，且防 VPN 泄漏规则已生效';
@@ -117,9 +128,12 @@ export function hostVpnTrackingMessage(status: NetworkRouteStatus): string {
         return '当前使用手机 VPN，与宿主 VPN 隔离；宿主切换节点不会改变云手机出口。';
     }
     if (status.route === 'host-direct') {
-        return status.protection.enabled && status.protection.expectedRoute === 'host-direct'
+        return status.protection.enabled &&
+            status.protection.expectedRoute === 'host-direct' &&
+            status.protection.guardMode === 'proxy-only' &&
+            status.protection.guardStatus === 'active'
             ? `云手机已固定使用宿主物理网络（${status.ip || 'IP 未知'}），宿主 VPN 切换节点不会改变该出口。`
-            : '当前出口匹配宿主物理网络；点击“不用宿主 VPN”后才会启用防泄漏锁定。';
+            : '当前出口匹配宿主物理网络，但防泄漏规则尚未确认；系统会自动复查或恢复。';
     }
     if (!status.hostVpn.active) {
         return '未检测到宿主 VPN；打开宿主 VPN 后，点击上面的宿主 VPN 按钮进行验证。';
@@ -177,15 +191,32 @@ export function statusDetails(status: NetworkRouteStatus): string[] {
     const hostVpn = status.hostVpn.active
         ? `宿主 VPN：已开启；出口 ${status.hostVpn.ip || '检测失败'}（${locationOf(status.hostVpn)}）`
         : `宿主 VPN：未检测到${status.hostVpn.error ? `（${status.hostVpn.error}）` : ''}`;
+    const guardExpected =
+        status.protection.guardMode === 'proxy-only' || status.protection.drifted || status.protection.guardEngaged;
+    const guardStatus = guardExpected
+        ? status.protection.guardStatus === 'active'
+            ? '防泄漏规则：正常'
+            : status.protection.guardStatus === 'missing'
+            ? '防泄漏规则：缺失，正在自动恢复'
+            : status.protection.guardStatus === 'unavailable'
+            ? `防泄漏规则：读取失败（${status.protection.guardError || '等待复查'}）`
+            : ''
+        : '';
     let protection = 'IP 防漂移：未锁定';
     if (status.protection.enabled) {
+        const proxyGuardDetail =
+            status.protection.guardMode === 'proxy-only'
+                ? status.protection.guardStatus === 'active'
+                    ? '；仅允许通过宿主直连中继联网'
+                    : '；防泄漏规则待确认'
+                : '';
         protection = status.protection.drifted
             ? `IP 防漂移：已触发；期望 ${status.protection.expectedIp || '未知'} / ${
                   status.protection.expectedRoute ? ROUTE_LABELS[status.protection.expectedRoute] : '路径未知'
               }；应用已停止${status.protection.guardEngaged ? '且网络已拦截' : ''}`
             : `IP 防漂移：已锁定 ${status.protection.expectedIp || '未知'} / ${
                   status.protection.expectedRoute ? ROUTE_LABELS[status.protection.expectedRoute] : '路径未知'
-              }${status.protection.guardMode === 'proxy-only' ? '；仅允许通过宿主直连中继联网' : ''}`;
+              }${proxyGuardDetail}`;
     }
     const latestChange = status.recentChanges[0];
     const change = latestChange
@@ -202,6 +233,7 @@ export function statusDetails(status: NetworkRouteStatus): string[] {
         hostDefault,
         hostDirect,
         hostVpn,
+        guardStatus,
         protection,
         status.protection.message ? `保护说明：${status.protection.message}` : '',
         change,

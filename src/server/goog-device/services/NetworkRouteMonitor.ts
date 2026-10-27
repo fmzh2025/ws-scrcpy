@@ -6,12 +6,14 @@ import {
     ExternalNetworkStatus,
     NetworkProtectionStatus,
     NetworkRouteChange,
+    NetworkRouteConfidence,
     NetworkRouteKind,
     NetworkRouteStatus,
 } from '../../../types/NetworkRouteStatus';
 import { Device, NetworkGuardState } from '../Device';
 import { ControlCenter } from './ControlCenter';
 import { HostNetworkProbe, parseIpWhoIsResponse } from './HostNetworkProbe';
+import { evaluateNetworkProtection } from './NetworkProtectionDecision';
 import { classifyNetworkRoute } from './NetworkRouteClassifier';
 import Timeout = NodeJS.Timeout;
 
@@ -340,6 +342,7 @@ export class NetworkRouteMonitor {
             device,
             emulatorResult,
             classification.route,
+            classification.confidence,
             androidVpn,
             guardState,
             enforcementSuspended,
@@ -374,68 +377,200 @@ export class NetworkRouteMonitor {
         device: Device,
         actual: ExternalNetworkStatus,
         route: NetworkRouteKind,
+        routeConfidence: NetworkRouteConfidence,
         androidVpn: AndroidVpnStatus,
         guardState: NetworkGuardState,
         enforcementSuspended: boolean,
     ): Promise<NetworkProtectionStatus> {
         const policy = this.policies.get(device.udid) || emptyPolicy();
         if (enforcementSuspended || this.switchingDevices.has(device.udid)) {
-            return { ...policy, message: '正在安全切换网络路径；自动漂移处理暂缓到切换完成' };
-        }
-        if (!policy.enabled) {
-            if (guardState.enabled) {
-                await device.setNetworkGuard(false);
-            }
-            return { ...policy };
-        }
-        policy.guardEngaged = guardState.enabled;
-        const proxyGuardMissing =
-            policy.guardMode === 'proxy-only' &&
-            (!guardState.enabled || !policy.allowedProxy || guardState.allowedProxy !== policy.allowedProxy);
-        const protectedDirectProbePending =
-            policy.expectedRoute === 'host-direct' &&
-            policy.guardMode === 'proxy-only' &&
-            !proxyGuardMissing &&
-            (!actual.ip || (actual.ip === policy.expectedIp && route === 'unknown'));
-        if (protectedDirectProbePending && !policy.drifted) {
             return {
                 ...policy,
-                message: '直连出口正在重新验证；防泄漏规则仍生效，业务 App 不会回落到宿主 VPN',
+                message: '正在安全切换网络路径；自动漂移处理暂缓到切换完成',
+                guardStatus: guardState.status,
+                guardError: guardState.error,
             };
         }
-        const mismatch =
-            !actual.ip || actual.ip !== policy.expectedIp || route !== policy.expectedRoute || proxyGuardMissing;
-        if (mismatch && (!policy.drifted || !guardState.enabled || proxyGuardMissing)) {
+        if (!policy.enabled) {
+            if (guardState.status !== 'unavailable' && guardState.enabled) {
+                const guard = await device.setNetworkGuard(false);
+                return {
+                    ...policy,
+                    guardEngaged: guard.enabled,
+                    guardStatus: guard.supported ? 'missing' : 'unavailable',
+                    guardError: guard.error,
+                };
+            }
+            return { ...policy, guardStatus: guardState.status, guardError: guardState.error };
+        }
+        const decision = evaluateNetworkProtection({
+            expectedIp: policy.expectedIp,
+            expectedRoute: policy.expectedRoute,
+            actualIp: actual.ip,
+            actualRoute: route,
+            routeConfidence,
+            alreadyDrifted: policy.drifted,
+            allowedProxy: policy.allowedProxy,
+            guardStatus: guardState.status,
+            guardEnabled: guardState.enabled,
+            guardAllowedProxy: guardState.allowedProxy,
+        });
+        const excludedPackages =
+            policy.expectedRoute === 'device-vpn' && androidVpn.packageName ? [androidVpn.packageName] : [];
+
+        if (decision.confirmedDrift) {
             const mismatchReasons = [
-                !actual.ip ? '未取得云手机出口 IP' : '',
-                actual.ip && actual.ip !== policy.expectedIp
-                    ? `IP ${actual.ip}（期望 ${policy.expectedIp || '未知'}）`
-                    : '',
-                route !== policy.expectedRoute ? `路径 ${route}（期望 ${policy.expectedRoute || '未知'}）` : '',
-                proxyGuardMissing
-                    ? `防泄漏规则 ${guardState.allowedProxy || '未启用'}（期望 ${policy.allowedProxy || '未知'}）`
-                    : '',
+                decision.ipDrift ? `IP ${actual.ip}（期望 ${policy.expectedIp || '未知'}）` : '',
+                decision.routeDrift ? `路径 ${route}（期望 ${policy.expectedRoute || '未知'}）` : '',
             ].filter(Boolean);
-            const excludedPackages =
-                policy.expectedRoute === 'device-vpn' && androidVpn.packageName ? [androidVpn.packageName] : [];
+            if (!decision.shouldStopApps) {
+                if (!decision.guardReadFailed && !decision.blockingGuardActive) {
+                    const guard = await device.setNetworkGuard(true, excludedPackages);
+                    policy.guardEngaged = guard.enabled;
+                    policy.guardMode = 'block-all';
+                    if (!guard.supported) {
+                        policy.message = `已确认出口漂移：${mismatchReasons.join(
+                            '；',
+                        )}；应用此前已停止，但网络拦截恢复失败（${guard.error || 'unknown error'}）`;
+                    }
+                    this.policies.set(device.udid, policy);
+                    this.saveState();
+                    return {
+                        ...policy,
+                        drifted: true,
+                        guardStatus: guard.supported && guard.enabled ? 'active' : 'unavailable',
+                        guardError: guard.error,
+                    };
+                }
+                return {
+                    ...policy,
+                    drifted: true,
+                    guardStatus: guardState.status,
+                    guardError: guardState.error,
+                };
+            }
             const stoppedPackages = await device.stopThirdPartyApps(excludedPackages);
             const guard = await device.setNetworkGuard(true, excludedPackages);
             policy.drifted = true;
             policy.guardEngaged = guard.enabled;
+            policy.guardMode = 'block-all';
             policy.lastChangedAt = Date.now();
             policy.stoppedPackages = stoppedPackages;
             policy.message = guard.supported
-                ? `检测到出口保护异常：${mismatchReasons.join('；')}；第三方应用已停止，且其网络已被拦截`
-                : `检测到 IP 或路径漂移；应用已停止，但 root 网络拦截失败（${guard.error || 'unknown error'}）`;
+                ? `已确认实际出口漂移：${mismatchReasons.join('；')}；第三方应用已停止，且其网络已被拦截`
+                : `已确认实际出口漂移；应用已停止，但 root 网络拦截失败（${guard.error || 'unknown error'}）`;
             this.policies.set(device.udid, policy);
             this.saveState();
-        } else if (!mismatch && !policy.drifted && guardState.enabled && policy.guardMode !== 'proxy-only') {
-            const guard = await device.setNetworkGuard(false);
-            policy.guardEngaged = guard.enabled;
-            this.policies.set(device.udid, policy);
-            this.saveState();
+            return {
+                ...policy,
+                guardStatus: guard.supported && guard.enabled ? 'active' : 'unavailable',
+                guardError: guard.error,
+            };
         }
-        return { ...policy, drifted: policy.drifted || mismatch };
+
+        if (decision.guardReadFailed) {
+            return {
+                ...policy,
+                message: `防泄漏规则读取失败，保留上次保护状态并将在下轮复查；未停止业务 App（${
+                    guardState.error || 'unknown error'
+                }）`,
+                guardStatus: 'unavailable',
+                guardError: guardState.error,
+            };
+        }
+
+        if (policy.drifted && !decision.expectedPathVerified && !decision.blockingGuardActive) {
+            const guard = await device.setNetworkGuard(true, excludedPackages);
+            policy.guardEngaged = guard.enabled;
+            policy.guardMode = 'block-all';
+            if (!guard.supported) {
+                policy.message = `出口仍在等待重新验证，网络拦截恢复失败；未再次停止业务 App（${
+                    guard.error || 'unknown error'
+                }）`;
+            }
+            this.policies.set(device.udid, policy);
+            this.saveState();
+            return {
+                ...policy,
+                guardStatus: guard.supported && guard.enabled ? 'active' : 'unavailable',
+                guardError: guard.error,
+            };
+        }
+
+        if (decision.shouldRepairProxyGuard && policy.allowedProxy) {
+            const guard = await device.setNetworkGuard(true, excludedPackages, policy.allowedProxy);
+            const repaired = guard.supported && guard.enabled && guard.allowedProxy === policy.allowedProxy;
+            if (repaired) {
+                const recoveredFromDrift = policy.drifted && decision.expectedPathVerified;
+                policy.drifted = false;
+                policy.guardEngaged = true;
+                policy.guardMode = 'proxy-only';
+                policy.lastChangedAt = Date.now();
+                policy.message = recoveredFromDrift
+                    ? '实际 IP 和路径已恢复到锁定值，防泄漏规则已自动恢复；未再次停止业务 App'
+                    : '实际 IP 和路径未漂移，防泄漏规则已自动恢复；未停止业务 App';
+                this.policies.set(device.udid, policy);
+                this.saveState();
+                return { ...policy, guardStatus: 'active' };
+            }
+            return {
+                ...policy,
+                guardEngaged: false,
+                message: `实际 IP 和路径未确认漂移，但防泄漏规则自动恢复失败；未停止业务 App（${
+                    guard.error || 'unknown error'
+                }）`,
+                guardStatus: guard.supported ? 'missing' : 'unavailable',
+                guardError: guard.error,
+            };
+        }
+
+        if (policy.drifted && decision.expectedPathVerified) {
+            if (decision.expectsProxyGuard) {
+                policy.guardEngaged = guardState.enabled;
+                policy.guardMode = 'proxy-only';
+            } else if (guardState.enabled) {
+                const guard = await device.setNetworkGuard(false, excludedPackages);
+                policy.guardEngaged = guard.enabled;
+                policy.guardMode = undefined;
+            } else {
+                policy.guardEngaged = false;
+                policy.guardMode = undefined;
+            }
+            policy.drifted = false;
+            policy.lastChangedAt = Date.now();
+            policy.message = '实际 IP 和路径已恢复到锁定值，出口保护已自动解除；未再次停止业务 App';
+            this.policies.set(device.udid, policy);
+            this.saveState();
+            return { ...policy, guardStatus: guardState.status, guardError: guardState.error };
+        }
+
+        if (decision.expectedPathVerified && !decision.expectsProxyGuard && guardState.enabled) {
+            const guard = await device.setNetworkGuard(false, excludedPackages);
+            policy.guardEngaged = guard.enabled;
+            policy.guardMode = undefined;
+            policy.message = guard.supported
+                ? '实际 IP 和路径保持锁定值，已清理不需要的网络拦截规则；未停止业务 App'
+                : `实际 IP 和路径保持锁定值，但网络拦截规则清理失败（${guard.error || 'unknown error'}）`;
+            this.policies.set(device.udid, policy);
+            this.saveState();
+            return {
+                ...policy,
+                guardStatus: guard.supported ? 'missing' : 'unavailable',
+                guardError: guard.error,
+            };
+        }
+
+        if (decision.probeIncomplete) {
+            return {
+                ...policy,
+                message: '实际出口正在重新验证；检测失败或路径未知不会停止业务 App',
+                guardStatus: guardState.status,
+                guardError: guardState.error,
+            };
+        }
+
+        policy.guardEngaged = guardState.enabled;
+        return { ...policy, guardStatus: guardState.status, guardError: guardState.error };
     }
 
     private recordObservation(

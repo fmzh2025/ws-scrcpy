@@ -2,6 +2,8 @@ export type NetworkRouteKind = 'host-vpn' | 'device-vpn' | 'host-direct' | 'unkn
 
 export type NetworkRouteConfidence = 'verified' | 'partial' | 'unknown';
 
+export type NetworkGuardReadStatus = 'active' | 'missing' | 'unavailable';
+
 export type ExternalNetworkStatus = {
     ip?: string;
     country?: string;
@@ -60,6 +62,8 @@ export type NetworkProtectionStatus = {
     message?: string;
     guardMode?: 'block-all' | 'proxy-only';
     allowedProxy?: string;
+    guardStatus?: NetworkGuardReadStatus;
+    guardError?: string;
 };
 
 export type NetworkRouteChange = {
