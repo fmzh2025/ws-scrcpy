@@ -60,12 +60,15 @@ export class StreamClientScrcpy
     private clientsCount = -1;
     private joinedStream = false;
     private requestedVideoSettings?: VideoSettings;
+    private desiredVideoSettings?: VideoSettings;
     private touchHandler?: FeaturedInteractionHandler;
     private moreBox?: GoogMoreBox;
     private player?: BasePlayer;
     private filePushHandler?: FilePushHandler;
     private fitToScreen?: boolean;
     private videoResizeCleanup?: () => void;
+    private videoPresentationCleanup?: () => void;
+    private videoElement?: HTMLElement;
     private pasteStatusTimeout?: number;
     private inlineKeyboard?: InlineKeyboardOverlay;
     private adbOverlay?: AdbOverlay;
@@ -206,8 +209,8 @@ export class StreamClientScrcpy
         if (!this.player) {
             return;
         }
-        let currentSettings = this.player.getVideoSettings();
-        const displayId = currentSettings.displayId;
+        let desiredSettings = VideoSettings.copy(this.desiredVideoSettings || this.player.getVideoSettings());
+        const displayId = desiredSettings.displayId;
         const info = infoArray.find((value) => {
             return value.displayInfo.displayId === displayId;
         });
@@ -225,13 +228,14 @@ export class StreamClientScrcpy
         if (this.fitToScreen) {
             const newBounds = this.getMaxSize();
             if (newBounds) {
-                currentSettings = StreamClientScrcpy.createVideoSettingsWithBounds(currentSettings, newBounds);
-                this.player.setVideoSettings(currentSettings, this.fitToScreen, false);
+                desiredSettings = StreamClientScrcpy.createVideoSettingsWithBounds(desiredSettings, newBounds);
+                this.desiredVideoSettings = VideoSettings.copy(desiredSettings);
+                this.player.setVideoSettings(desiredSettings, this.fitToScreen, false);
             }
         }
         if (!videoSettings || !screenInfo) {
             this.joinedStream = true;
-            this.sendMessage(CommandControlMessage.createSetVideoSettingsCommand(currentSettings));
+            this.sendMessage(CommandControlMessage.createSetVideoSettingsCommand(desiredSettings));
             return;
         }
 
@@ -242,26 +246,38 @@ export class StreamClientScrcpy
             this.player.setStreamScreenInfo(screenInfo);
         }
 
-        if (!videoSettings.equals(currentSettings)) {
+        if (videoSettings.equals(desiredSettings)) {
             this.applyNewVideoSettings(videoSettings, videoSettings.equals(this.requestedVideoSettings));
+        } else {
+            const source = `${screenInfo.videoSize.width}x${screenInfo.videoSize.height}`;
+            const requested = desiredSettings.bounds
+                ? `${desiredSettings.bounds.width}x${desiredSettings.bounds.height}`
+                : 'original';
+            console.warn(
+                `${TAG} source size differs from requested bounds udid=${this.params.udid} source=${source} requested=${requested}`,
+            );
         }
-        if (!oldInfo) {
-            const bounds = currentSettings.bounds;
-            const videoSize: Size = screenInfo.videoSize;
-            const onlyOneClient = this.clientsCount === 0;
-            const smallerThenCurrent = bounds && (bounds.width < videoSize.width || bounds.height < videoSize.height);
-            if (onlyOneClient || smallerThenCurrent || this.mobileView) {
-                // Mobile explicitly requests a readable source when joining, even if
-                // the existing shared stream was started at a desktop thumbnail size.
-                min = currentSettings;
-            }
-            const minBounds = currentSettings.bounds?.intersect(min.bounds);
-            if (minBounds && !minBounds.equals(min.bounds)) {
-                min = StreamClientScrcpy.createVideoSettingsWithBounds(min, minBounds);
-            }
+
+        const bounds = desiredSettings.bounds;
+        const videoSize: Size = screenInfo.videoSize;
+        const onlyOneClient = this.clientsCount === 0;
+        const smallerThenCurrent = bounds && (bounds.width < videoSize.width || bounds.height < videoSize.height);
+        if (onlyOneClient || smallerThenCurrent || this.mobileView) {
+            // Reapply this client's requested bounds after every reconnect. The
+            // shared scrcpy server may briefly report its full-resolution default.
+            min = desiredSettings;
+        }
+        const minBounds = desiredSettings.bounds?.intersect(min.bounds);
+        if (minBounds && !minBounds.equals(min.bounds)) {
+            min = StreamClientScrcpy.createVideoSettingsWithBounds(min, minBounds);
         }
         if (!min.equals(videoSettings) || !this.joinedStream) {
             this.joinedStream = true;
+            console.info(
+                `${TAG} applying video settings udid=${this.params.udid} bounds=${
+                    min.bounds ? `${min.bounds.width}x${min.bounds.height}` : 'original'
+                } clients=${this.clientsCount}`,
+            );
             this.sendMessage(CommandControlMessage.createSetVideoSettingsCommand(min));
         }
     };
@@ -356,6 +372,9 @@ export class StreamClientScrcpy
             }
             this.videoResizeCleanup?.();
             this.videoResizeCleanup = undefined;
+            this.videoPresentationCleanup?.();
+            this.videoPresentationCleanup = undefined;
+            this.videoElement = undefined;
             this.inlineKeyboard?.release();
             this.inlineKeyboard = undefined;
             this.adbOverlay?.release();
@@ -381,9 +400,22 @@ export class StreamClientScrcpy
         this.controlButtons.appendChild(this.networkPanel.getElement());
         const video = document.createElement('div');
         video.className = 'video';
+        this.videoElement = video;
         deviceView.appendChild(video);
         deviceView.appendChild(moreBox);
         player.setParent(video);
+        player.on('video-view-resize', this.onVideoViewResize);
+        const onViewportResize = () => {
+            const screenInfo = this.player?.getScreenInfo();
+            if (screenInfo) {
+                this.fitVideoPresentation(screenInfo.videoSize);
+            }
+        };
+        window.addEventListener('resize', onViewportResize);
+        this.videoPresentationCleanup = () => {
+            player?.off('video-view-resize', this.onVideoViewResize);
+            window.removeEventListener('resize', onViewportResize);
+        };
         if (!mobile) {
             this.addVideoResizeHandle(video);
         }
@@ -412,6 +444,7 @@ export class StreamClientScrcpy
                 videoSettings = StreamClientScrcpy.createVideoSettingsWithBounds(videoSettings, newBounds);
             }
         }
+        this.desiredVideoSettings = VideoSettings.copy(videoSettings);
         this.applyNewVideoSettings(videoSettings, false);
         const element = player.getTouchableElement();
         const logger = new DragAndPushLogger(element);
@@ -531,6 +564,7 @@ export class StreamClientScrcpy
 
     public sendNewVideoSetting(videoSettings: VideoSettings): void {
         this.requestedVideoSettings = videoSettings;
+        this.desiredVideoSettings = VideoSettings.copy(videoSettings);
         this.sendMessage(CommandControlMessage.createSetVideoSettingsCommand(videoSettings));
     }
 
@@ -599,6 +633,31 @@ export class StreamClientScrcpy
             window.removeEventListener('pointermove', onPointerMove);
             window.removeEventListener('pointerup', onPointerUp);
         };
+    }
+
+    private onVideoViewResize = (size: Size): void => {
+        this.fitVideoPresentation(size);
+    };
+
+    private fitVideoPresentation(size: Size): void {
+        const video = this.videoElement;
+        if (!video || this.mobileView || MobileStreamView.isEnabled()) {
+            return;
+        }
+        const max = this.getMaxSize();
+        if (!max || !size.width || !size.height) {
+            return;
+        }
+        const scale = Math.min(1, max.width / size.width, max.height / size.height);
+        const width = Math.max(16, Math.floor(size.width * scale));
+        const height = Math.max(16, Math.floor(size.height * scale));
+        video.style.width = `${width}px`;
+        video.style.height = `${height}px`;
+        if (scale < 1) {
+            console.warn(
+                `${TAG} clamped oversized stream udid=${this.params.udid} source=${size.width}x${size.height} view=${width}x${height}`,
+            );
+        }
     }
 
     private getResizeBounds(requestedWidth: number, aspectRatio: number): Size {
