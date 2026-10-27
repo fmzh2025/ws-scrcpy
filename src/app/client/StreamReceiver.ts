@@ -59,6 +59,7 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     private connectionWatchdog?: number;
     private lastScrollLogAt = 0;
     private reconnectOnResume = false;
+    private blurSuspendTimer?: number;
 
     constructor(params: P) {
         super(params);
@@ -267,6 +268,12 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     }
 
     public sendEvent(event: ControlMessage): void {
+        // In embedded browsers a tab can become interactive again without a
+        // matching focus/visibility event. A real user operation is definitive
+        // evidence that this page must resume its connection.
+        if (this.suspended && !document.hidden) {
+            this.resumeConnection('control-event');
+        }
         const isConnected = !!(this.ws && this.ws.readyState === this.ws.OPEN);
         this.logOperation(event, isConnected);
         if (!isConnected || !this.sendControlMessage(event)) {
@@ -353,6 +360,7 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
         window.removeEventListener('pageshow', this.onPageResume);
         window.removeEventListener('online', this.onNetworkOnline);
         this.clearReconnectTimer();
+        this.clearBlurSuspendTimer();
         if (this.connectionWatchdog) {
             window.clearInterval(this.connectionWatchdog);
             this.connectionWatchdog = undefined;
@@ -378,16 +386,34 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
         if (this.stopped || document.hidden) {
             return;
         }
+        this.clearBlurSuspendTimer();
         this.resumeConnection('page-resume');
     };
 
     private onPageBlur = (): void => {
-        if (!this.stopped) {
-            this.suspendConnection('page-blur');
+        if (this.stopped || this.blurSuspendTimer) {
+            return;
         }
+        // Avoid tearing down the stream for transient focus changes while the
+        // user clicks browser chrome or an overlay. A real tab switch remains
+        // blurred and is suspended shortly afterwards.
+        this.blurSuspendTimer = window.setTimeout(() => {
+            this.blurSuspendTimer = undefined;
+            if (!this.stopped) {
+                this.suspendConnection('page-blur');
+            }
+        }, 300);
     };
 
+    private clearBlurSuspendTimer(): void {
+        if (this.blurSuspendTimer) {
+            window.clearTimeout(this.blurSuspendTimer);
+            this.blurSuspendTimer = undefined;
+        }
+    }
+
     private suspendConnection(reason: string): void {
+        this.clearBlurSuspendTimer();
         this.suspended = true;
         this.reconnectOnResume = true;
         this.clearReconnectTimer();
@@ -398,6 +424,7 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     }
 
     private resumeConnection(reason: string): void {
+        this.clearBlurSuspendTimer();
         const mustReplaceConnection = this.reconnectOnResume;
         this.suspended = false;
         this.reconnectOnResume = false;
