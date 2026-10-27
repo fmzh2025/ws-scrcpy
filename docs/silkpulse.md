@@ -39,7 +39,7 @@
 
 查询参数放在 `#!` 之前。引导读取后会从地址栏移除它，保留业务 hash 路由。会话保存于 sessionStorage，默认 30 分钟，`sessionMinutes` 可配置 1–120 分钟；有效期在页面加载时检查，已打开页面不会到点自动断开。需要立即停止时使用关闭链接/按钮刷新。关闭状态优先于测试设备名单。Safari 禁止存储时，显式链接仍能在当前页启用，但跨页不保证保留。
 
-指定测试设备自动开启：在该浏览器控制台读取 `window.WSSilkPulse.testDeviceId`，加入公开配置 `testDeviceIds` 数组后重新构建部署。它是本浏览器本源的随机选择器，不是 SilkPulse `/api/devices` 中的设备 ID。清理网站数据会改变它；名单不是鉴权边界。当前名单为空。也可在 Safari Web Inspector 读取该值。
+指定测试设备自动开启：在该浏览器控制台读取 `window.WSSilkPulse.testDeviceId`，加入公开配置 `testDeviceIds` 数组后重新构建部署。它是本浏览器本源的随机选择器，不是 SilkPulse `/api/devices` 中的设备 ID。清理网站数据会改变它；名单不是鉴权边界。也可在 Safari Web Inspector 读取该值。流页面还会把 hash 路由中的 `udid` 和 `player` 作为安全标签上报，例如 `udid-emulator-5554`、`player-mse`，用于在控制台区分对应云手机和播放器。
 
 ## 手机验证步骤
 

@@ -9,6 +9,15 @@
     var deviceId = '';
     var url = new URL(location.href);
     var switchValue = url.searchParams.get('silkpulse');
+    var route = new URLSearchParams(url.hash.replace(/^#!/, ''));
+    var udid = route.get('udid') || '';
+    var player = route.get('player') || '';
+    var safeTag = function (prefix, value) {
+        if (!value) return '';
+        var normalized = String(value).replace(/[^A-Za-z0-9._:-]/g, '-').slice(0, 64);
+        return normalized ? prefix + normalized : '';
+    };
+    var routeTags = [safeTag('udid-', udid), safeTag('player-', player)].filter(Boolean);
     try {
         deviceId = localStorage.getItem(deviceKey) || '';
         if (!deviceId) {
@@ -32,6 +41,8 @@
         enabled: enabled,
         state: enabled ? 'loading' : 'disabled',
         testDeviceId: deviceId,
+        streamDevice: udid,
+        streamPlayer: player,
         ready: ready,
         disable: function () {
             try { sessionStorage.setItem(sessionKey, JSON.stringify({ enabled: false })); } catch (_) {}
@@ -54,7 +65,7 @@
     script.setAttribute('data-server', config.server);
     script.setAttribute('data-project-id', config.projectId);
     script.setAttribute('data-device-token', config.deviceToken);
-    script.setAttribute('data-tags', ['ws-scrcpy', config.environment].concat(config.tags).filter(function (tag, i, all) {
+    script.setAttribute('data-tags', ['ws-scrcpy', config.environment].concat(config.tags, routeTags).filter(function (tag, i, all) {
         return all.indexOf(tag) === i;
     }).join(','));
     script.setAttribute('data-floating-ball', '0');

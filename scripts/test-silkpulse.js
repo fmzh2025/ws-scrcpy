@@ -3,15 +3,15 @@ const fs = require('fs');
 const vm = require('vm');
 const template = fs.readFileSync('src/public/silkpulse-bootstrap.js', 'utf8');
 
-function boot({ query = '', session, blockedStorage = false, allowDevice = false } = {}) {
+function boot({ query = '', hash = '#!action=stream&udid=emulator-5554&player=mse', session, blockedStorage = false, allowDevice = false } = {}) {
     const scripts = [];
     const timers = [];
     const attrs = {};
     const storage = new Map(session ? [['ws-scrcpy:silkpulse-session', JSON.stringify(session)]] : []);
     const config = { server: 'https://debug.foxhello.com', projectId: 'test-project', deviceToken: 'test-device-token',
         environment: 'production', tags: ['cloudphone-h5'], testDeviceIds: allowDevice ? ['test-device'] : [], sessionMinutes: 30 };
-    const context = vm.createContext({ URL, Promise, Date, Math,
-        window: {}, location: { href: 'http://localhost:8000/' + query + '#!action=stream' },
+    const context = vm.createContext({ URL, URLSearchParams, Promise, Date, Math,
+        window: {}, location: { href: 'http://localhost:8000/' + query + hash },
         history: { state: null, replaceState(_s, _t, url) { context.location.href = url; } },
         localStorage: { getItem() { if (blockedStorage) throw Error('blocked'); return 'test-device'; } },
         sessionStorage: { getItem(key) { if (blockedStorage) throw Error('blocked'); return storage.get(key); },
@@ -35,8 +35,12 @@ function boot({ query = '', session, blockedStorage = false, allowDevice = false
     assert.strictEqual(on.attrs['data-device-token'], 'test-device-token');
     assert.strictEqual(on.attrs['data-server'], 'https://debug.foxhello.com');
     assert(on.attrs['data-tags'].includes('production'));
+    assert(on.attrs['data-tags'].includes('udid-emulator-5554'));
+    assert(on.attrs['data-tags'].includes('player-mse'));
+    assert.strictEqual(on.status.streamDevice, 'emulator-5554');
+    assert.strictEqual(on.status.streamPlayer, 'mse');
     assert(!on.context.location.href.includes('silkpulse=1'), 'consume the switch while preserving SPA routing');
-    assert(on.context.location.href.endsWith('#!action=stream'));
+    assert(on.context.location.href.endsWith('#!action=stream&udid=emulator-5554&player=mse'));
     vm.runInContext(on.source, on.context);
     assert.strictEqual(on.scripts.length, 1, 'SPA/bootstrap repetition must not duplicate SDK initialization');
     on.scripts[0].onload();
