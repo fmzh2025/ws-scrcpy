@@ -73,6 +73,7 @@ export class StreamClientScrcpy
     private touchDiagnostics?: TouchDiagnostics;
     private mobileView?: MobileStreamView;
     private changingDisplay = false;
+    private resumePlayerOnConnect = false;
     private readonly streamReceiver: StreamReceiverScrcpy;
 
     public static registerPlayer(playerClass: PlayerClass): void {
@@ -267,14 +268,28 @@ export class StreamClientScrcpy
 
     public onDisconnected = (): void => {
         this.joinedStream = false;
+        this.resumePlayerOnConnect = true;
+        // A reconnected H.264 stream starts a new decoder timeline. Keeping the
+        // previous MSE converter alive can leave the video parked on its last
+        // decoded frame even though the replacement WebSocket is receiving data.
+        this.player?.pause();
         if (this.changingDisplay) {
             // Display-profile changes deliberately rebuild the encoder. Keep the
             // controls alive while the page waits for the replacement stream.
-            this.player?.pause();
             return;
         }
         // Keep controls and listeners alive while StreamReceiver reconnects.
         console.warn(TAG, 'Stream disconnected; waiting for transport reconnect');
+    };
+
+    public onConnected = (): void => {
+        if (!this.resumePlayerOnConnect) {
+            return;
+        }
+        this.resumePlayerOnConnect = false;
+        // MsePlayer.play() creates a fresh MediaSource/converter after pause().
+        // Other players simply resume and wait for the next decodable frame.
+        this.player?.play();
     };
 
     public startStream({ udid, player, playerName, videoSettings, fitToScreen }: StartParams): void {
@@ -329,6 +344,12 @@ export class StreamClientScrcpy
             if (parent) {
                 parent.removeChild(moreBox);
             }
+            this.streamReceiver.off('connected', this.onConnected);
+            this.streamReceiver.off('deviceMessage', this.OnDeviceMessage);
+            this.streamReceiver.off('video', this.onVideo);
+            this.streamReceiver.off('clientsStats', this.onClientsStats);
+            this.streamReceiver.off('displayInfo', this.onDisplayInfo);
+            this.streamReceiver.off('disconnected', this.onDisconnected);
             this.streamReceiver.stop();
             if (this.player) {
                 this.player.stop();
@@ -402,6 +423,7 @@ export class StreamClientScrcpy
         this.filePushHandler.addEventListener(logger);
 
         const streamReceiver = this.streamReceiver;
+        streamReceiver.on('connected', this.onConnected);
         streamReceiver.on('deviceMessage', this.OnDeviceMessage);
         streamReceiver.on('video', this.onVideo);
         streamReceiver.on('clientsStats', this.onClientsStats);
