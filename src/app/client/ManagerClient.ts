@@ -31,11 +31,15 @@ export abstract class ManagerClient<P extends ParamsBase, TE extends EventMap> e
     }
 
     protected openNewConnection(): Multiplexer | WebSocket {
-        if (this.ws && this.ws.readyState === this.ws.OPEN) {
-            this.ws.close();
+        if (this.ws) {
+            const previous = this.ws;
             delete this.ws;
+            if (previous.readyState !== previous.CLOSED && previous.readyState !== previous.CLOSING) {
+                previous.close();
+            }
         }
         const url = this.url.toString();
+        let ws: Multiplexer | WebSocket;
         if (this.supportMultiplexing()) {
             let openedMultiplexer = ManagerClient.sockets.get(url);
             if (!openedMultiplexer) {
@@ -50,19 +54,30 @@ export abstract class ManagerClient<P extends ParamsBase, TE extends EventMap> e
                 ManagerClient.sockets.set(url, newMultiplexer);
                 openedMultiplexer = newMultiplexer;
             }
-            const ws = openedMultiplexer.createChannel(this.getChannelInitData());
-            ws.addEventListener('open', this.onSocketOpen.bind(this));
-            ws.addEventListener('message', this.onSocketMessage.bind(this));
-            ws.addEventListener('close', this.onSocketClose.bind(this));
-            this.ws = ws;
+            ws = openedMultiplexer.createChannel(this.getChannelInitData());
         } else {
-            const ws = new WebSocket(url);
-            ws.addEventListener('open', this.onSocketOpen.bind(this));
-            ws.addEventListener('message', this.onSocketMessage.bind(this));
-            ws.addEventListener('close', this.onSocketClose.bind(this));
-            this.ws = ws;
+            ws = new WebSocket(url);
         }
-        return this.ws;
+        this.ws = ws;
+        const eventSocket = ws as WebSocket;
+        // Replaced sockets can deliver a late open/close event. Ignore it so an
+        // obsolete connection cannot disconnect or overwrite the current one.
+        eventSocket.addEventListener('open', (event) => {
+            if (this.ws === ws) {
+                this.onSocketOpen(event);
+            }
+        });
+        eventSocket.addEventListener('message', (event) => {
+            if (this.ws === ws) {
+                this.onSocketMessage(event);
+            }
+        });
+        eventSocket.addEventListener('close', (event) => {
+            if (this.ws === ws) {
+                this.onSocketClose(event);
+            }
+        });
+        return ws;
     }
 
     public destroy(): void {

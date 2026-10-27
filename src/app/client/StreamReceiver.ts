@@ -7,9 +7,14 @@ import Util from '../Util';
 import { DisplayInfo } from '../DisplayInfo';
 import { ParamsStream } from '../../types/ParamsStream';
 import { TouchDiagnostics } from '../interactionHandler/TouchDiagnostics';
+import { TouchControlMessage } from '../controlMessage/TouchControlMessage';
+import { KeyCodeControlMessage } from '../controlMessage/KeyCodeControlMessage';
 
 const DEVICE_NAME_FIELD_LENGTH = 64;
 const MAGIC_BYTES_INITIAL = Util.stringToUtf8ByteArray('scrcpy_initial');
+const CONNECTION_WATCHDOG_INTERVAL_MS = 5_000;
+const CONNECTION_OPEN_TIMEOUT_MS = 12_000;
+const SCROLL_LOG_INTERVAL_MS = 1_000;
 
 export type ClientsStats = {
     deviceName: string;
@@ -49,21 +54,102 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     private reconnectAttempts = 0;
     private stopped = false;
     private suspended = false;
+    private connected = false;
+    private connectionStartedAt?: number;
+    private connectionWatchdog?: number;
+    private lastScrollLogAt = 0;
+    private reconnectOnResume = false;
 
     constructor(params: P) {
         super(params);
         this.suspended = document.hidden;
         document.addEventListener('visibilitychange', this.onVisibilityChange);
+        window.addEventListener('focus', this.onPageResume);
+        window.addEventListener('blur', this.onPageBlur);
+        window.addEventListener('pageshow', this.onPageResume);
+        window.addEventListener('online', this.onNetworkOnline);
+        this.connectionWatchdog = window.setInterval(this.checkConnection, CONNECTION_WATCHDOG_INTERVAL_MS);
         if (!this.suspended) {
-            this.openConnection();
+            this.openConnection('initial');
         }
     }
 
-    private openConnection(): void {
-        const ws = this.openNewConnection();
-        if (ws) {
-            ws.binaryType = 'arraybuffer';
+    private openConnection(reason: string): void {
+        if (this.stopped || this.suspended || document.hidden) {
+            return;
         }
+        this.clearReconnectTimer();
+        if (this.connected) {
+            this.notifyDisconnected(this.createCloseEvent(`Replacing stale connection: ${reason}`));
+        }
+        this.connectionStartedAt = Date.now();
+        console.info(`${TAG} opening udid=${this.params.udid} reason=${reason} attempt=${this.reconnectAttempts + 1}`);
+        try {
+            const ws = this.openNewConnection();
+            ws.binaryType = 'arraybuffer';
+        } catch (error) {
+            this.connectionStartedAt = undefined;
+            const detail = error instanceof Error ? error.message : String(error);
+            console.error(`${TAG} open failed udid=${this.params.udid}: ${detail}`);
+            this.scheduleReconnect('open-failed');
+        }
+    }
+
+    private ensureConnection(reason: string, immediate = false): void {
+        if (this.stopped || this.suspended || document.hidden) {
+            return;
+        }
+        const ws = this.ws;
+        if (ws && ws.readyState === ws.OPEN) {
+            return;
+        }
+        if (ws && ws.readyState === ws.CONNECTING) {
+            const age = this.connectionStartedAt === undefined ? Infinity : Date.now() - this.connectionStartedAt;
+            if (age < CONNECTION_OPEN_TIMEOUT_MS) {
+                return;
+            }
+            console.warn(`${TAG} reconnect udid=${this.params.udid} reason=connecting-timeout ageMs=${age}`);
+            this.openConnection('connecting-timeout');
+            return;
+        }
+        if (this.reconnectTimer) {
+            if (!immediate) {
+                return;
+            }
+            this.clearReconnectTimer();
+        }
+        this.openConnection(reason);
+    }
+
+    private scheduleReconnect(reason: string): void {
+        if (this.stopped || this.suspended || this.reconnectTimer) {
+            return;
+        }
+        const delay = Math.min(10_000, 1_000 * 2 ** this.reconnectAttempts++);
+        console.warn(`${TAG} reconnect scheduled udid=${this.params.udid} reason=${reason} delayMs=${delay}`);
+        this.reconnectTimer = window.setTimeout(() => {
+            this.reconnectTimer = undefined;
+            this.ensureConnection(`retry-${reason}`, true);
+        }, delay);
+    }
+
+    private clearReconnectTimer(): void {
+        if (this.reconnectTimer) {
+            window.clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = undefined;
+        }
+    }
+
+    private createCloseEvent(reason: string): CloseEvent {
+        return new CloseEvent('close', { code: 4000, reason });
+    }
+
+    private notifyDisconnected(event: CloseEvent): void {
+        if (!this.connected) {
+            return;
+        }
+        this.connected = false;
+        this.emit('disconnected', event);
     }
 
     private handleInitialInfo(data: ArrayBuffer): void {
@@ -138,17 +224,10 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     }
 
     protected onSocketClose(ev: CloseEvent): void {
-        console.log(`${TAG}. WS closed: ${ev.reason}`);
-        this.emit('disconnected', ev);
-        if (!this.stopped && !this.suspended && !this.reconnectTimer) {
-            const delay = Math.min(10_000, 1_000 * 2 ** this.reconnectAttempts++);
-            this.reconnectTimer = window.setTimeout(() => {
-                this.reconnectTimer = undefined;
-                if (!this.stopped && !this.suspended) {
-                    this.openConnection();
-                }
-            }, delay);
-        }
+        this.connectionStartedAt = undefined;
+        console.warn(`${TAG} disconnected udid=${this.params.udid} code=${ev.code} reason=${ev.reason || 'none'}`);
+        this.notifyDisconnected(ev);
+        this.scheduleReconnect('socket-close');
     }
 
     protected onSocketMessage(event: MessageEvent): void {
@@ -172,39 +251,114 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     }
 
     protected onSocketOpen(): void {
+        this.connectionStartedAt = undefined;
         this.reconnectAttempts = 0;
+        this.connected = true;
+        console.info(`${TAG} connected udid=${this.params.udid}`);
         this.emit('connected', void 0);
         let e = this.events.shift();
         while (e) {
-            this.sendEvent(e);
+            if (!this.sendControlMessage(e)) {
+                this.events.unshift(e);
+                break;
+            }
             e = this.events.shift();
         }
     }
 
     public sendEvent(event: ControlMessage): void {
-        if (this.ws && this.ws.readyState === this.ws.OPEN) {
-            try {
-                this.ws.send(event.toBuffer());
-            } catch (error) {
-                TouchDiagnostics.failed(event, error);
-                throw error;
-            }
-            TouchDiagnostics.sent(event, true);
-        } else {
+        const isConnected = !!(this.ws && this.ws.readyState === this.ws.OPEN);
+        this.logOperation(event, isConnected);
+        if (!isConnected || !this.sendControlMessage(event)) {
             this.events.push(event);
             TouchDiagnostics.sent(event, false);
+            this.ensureConnection('control-event', true);
+        }
+    }
+
+    private sendControlMessage(event: ControlMessage): boolean {
+        const ws = this.ws;
+        if (!ws || ws.readyState !== ws.OPEN) {
+            return false;
+        }
+        try {
+            ws.send(event.toBuffer());
+            TouchDiagnostics.sent(event, true);
+            return true;
+        } catch (error) {
+            TouchDiagnostics.failed(event, error);
+            const detail = error instanceof Error ? error.message : String(error);
+            console.error(`${TAG} control send failed udid=${this.params.udid}: ${detail}`);
+            if (ws.readyState !== ws.CLOSING && ws.readyState !== ws.CLOSED) {
+                ws.close(4001, 'control-send-failed');
+            }
+            return false;
+        }
+    }
+
+    private logOperation(event: ControlMessage, isConnected: boolean): void {
+        const connection = isConnected ? 'sent' : 'queued';
+        if (event.type === ControlMessage.TYPE_TOUCH) {
+            const touch = event as TouchControlMessage;
+            const action = touch.action === 0 ? 'down' : touch.action === 1 ? 'up' : touch.action === 3 ? 'cancel' : '';
+            if (action) {
+                const { point } = touch.position;
+                console.info(
+                    `[CloudPhoneOperation] touch-${action} x=${Math.round(point.x)} y=${Math.round(
+                        point.y,
+                    )} connection=${connection}`,
+                );
+            }
+            return;
+        }
+        if (event.type === ControlMessage.TYPE_KEYCODE) {
+            const key = event as KeyCodeControlMessage;
+            console.info(
+                `[CloudPhoneOperation] key-${
+                    key.action === 0 ? 'down' : 'up'
+                } connection=${connection} content=redacted`,
+            );
+            return;
+        }
+        if (event.type === ControlMessage.TYPE_SCROLL) {
+            const now = Date.now();
+            if (now - this.lastScrollLogAt >= SCROLL_LOG_INTERVAL_MS) {
+                this.lastScrollLogAt = now;
+                console.info(`[CloudPhoneOperation] scroll connection=${connection}`);
+            }
+            return;
+        }
+        const operationNames: Record<number, string> = {
+            [ControlMessage.TYPE_TEXT]: 'text-input content=redacted',
+            [ControlMessage.TYPE_BACK_OR_SCREEN_ON]: 'back-or-screen-on',
+            [ControlMessage.TYPE_EXPAND_NOTIFICATION_PANEL]: 'expand-notifications',
+            [ControlMessage.TYPE_EXPAND_SETTINGS_PANEL]: 'expand-settings',
+            [ControlMessage.TYPE_COLLAPSE_PANELS]: 'collapse-panels',
+            [ControlMessage.TYPE_GET_CLIPBOARD]: 'get-clipboard content=redacted',
+            [ControlMessage.TYPE_SET_CLIPBOARD]: 'set-clipboard content=redacted',
+            [ControlMessage.TYPE_SET_SCREEN_POWER_MODE]: 'screen-power',
+            [ControlMessage.TYPE_ROTATE_DEVICE]: 'rotate-device',
+        };
+        const name = operationNames[event.type];
+        if (name) {
+            console.info(`[CloudPhoneOperation] ${name} connection=${connection}`);
         }
     }
 
     public stop(): void {
         this.stopped = true;
         document.removeEventListener('visibilitychange', this.onVisibilityChange);
-        if (this.reconnectTimer) {
-            window.clearTimeout(this.reconnectTimer);
-            this.reconnectTimer = undefined;
+        window.removeEventListener('focus', this.onPageResume);
+        window.removeEventListener('blur', this.onPageBlur);
+        window.removeEventListener('pageshow', this.onPageResume);
+        window.removeEventListener('online', this.onNetworkOnline);
+        this.clearReconnectTimer();
+        if (this.connectionWatchdog) {
+            window.clearInterval(this.connectionWatchdog);
+            this.connectionWatchdog = undefined;
         }
-        if (this.ws && this.ws.readyState === this.ws.OPEN) {
-            this.ws.close();
+        if (this.ws && this.ws.readyState !== this.ws.CLOSED && this.ws.readyState !== this.ws.CLOSING) {
+            this.ws.close(1000, 'stream-stopped');
         }
         this.events.length = 0;
     }
@@ -214,21 +368,55 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
             return;
         }
         if (document.hidden) {
-            this.suspended = true;
-            if (this.reconnectTimer) {
-                window.clearTimeout(this.reconnectTimer);
-                this.reconnectTimer = undefined;
-            }
-            if (this.ws && this.ws.readyState !== this.ws.CLOSED && this.ws.readyState !== this.ws.CLOSING) {
-                this.ws.close();
-            }
+            this.suspendConnection('page-hidden');
             return;
         }
-        this.suspended = false;
-        this.reconnectAttempts = 0;
-        if (!this.ws || this.ws.readyState === this.ws.CLOSED || this.ws.readyState === this.ws.CLOSING) {
-            this.openConnection();
+        this.resumeConnection('page-visible');
+    };
+
+    private onPageResume = (): void => {
+        if (this.stopped || document.hidden) {
+            return;
         }
+        this.resumeConnection('page-resume');
+    };
+
+    private onPageBlur = (): void => {
+        if (!this.stopped) {
+            this.suspendConnection('page-blur');
+        }
+    };
+
+    private suspendConnection(reason: string): void {
+        this.suspended = true;
+        this.reconnectOnResume = true;
+        this.clearReconnectTimer();
+        console.info(`${TAG} suspended udid=${this.params.udid} reason=${reason}`);
+        if (this.ws && this.ws.readyState !== this.ws.CLOSED && this.ws.readyState !== this.ws.CLOSING) {
+            this.ws.close(1000, reason);
+        }
+    }
+
+    private resumeConnection(reason: string): void {
+        const mustReplaceConnection = this.reconnectOnResume;
+        this.suspended = false;
+        this.reconnectOnResume = false;
+        this.reconnectAttempts = 0;
+        if (mustReplaceConnection) {
+            // Some embedded browsers omit visibilitychange and retain a stale
+            // OPEN state. Always create a fresh socket after a real blur/return.
+            this.openConnection(reason);
+        } else {
+            this.ensureConnection(reason, true);
+        }
+    }
+
+    private onNetworkOnline = (): void => {
+        this.ensureConnection('browser-online', true);
+    };
+
+    private checkConnection = (): void => {
+        this.ensureConnection('watchdog');
     };
 
     public getEncoders(): string[] {
