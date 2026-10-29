@@ -69,6 +69,7 @@ export class MsePlayer extends BasePlayer {
     private lastTime = -1;
     protected canPlay = false;
     private seekingSince = -1;
+    private lastRecoveryLogAt = -1;
     private onSeekEnd = (): void => {
         this.seekingSince = -1;
         this.tag.removeEventListener('seeked', this.onSeekEnd);
@@ -379,8 +380,7 @@ export class MsePlayer extends BasePlayer {
         // Workaround for stalled playback (`stalled` event is not fired, but the image freezes)
         const { currentTime } = this.tag;
         const now = Date.now();
-        // let reasonToJump = '';
-        let hasReasonToJump = false;
+        let recoveryReason = '';
         if (this.momentumQualityStats) {
             if (this.momentumQualityStats.decodedFrames === 0 && this.momentumQualityStats.inputFrames > 0) {
                 if (this.noDecodedFramesSince === -1) {
@@ -388,16 +388,17 @@ export class MsePlayer extends BasePlayer {
                 } else {
                     const time = now - this.noDecodedFramesSince;
                     if (time > this.MAX_TIME_TO_RECOVER) {
-                        // reasonToJump = `No frames decoded for ${time} ms.`;
-                        hasReasonToJump = true;
+                        recoveryReason = 'no-decoded-frames';
                     }
                 }
             } else {
                 this.noDecodedFramesSince = -1;
             }
         }
-        if (currentTime === this.lastTime && this.currentTimeNotChangedSince === -1) {
-            this.currentTimeNotChangedSince = now;
+        if (currentTime === this.lastTime) {
+            if (this.currentTimeNotChangedSince === -1) {
+                this.currentTimeNotChangedSince = now;
+            }
         } else {
             this.currentTimeNotChangedSince = -1;
         }
@@ -415,10 +416,7 @@ export class MsePlayer extends BasePlayer {
                 } else {
                     const time = now - this.bigBufferSince;
                     if (time > this.MAX_TIME_TO_RECOVER) {
-                        // reasonToJump = `Buffer is bigger then ${this.MAX_BUFFER} (${buffered.toFixed(
-                        //     3,
-                        // )}) for ${time} ms.`;
-                        hasReasonToJump = true;
+                        recoveryReason ||= hasBufferedGap ? 'buffer-gap' : 'buffer-backlog';
                     }
                 }
             } else {
@@ -430,8 +428,7 @@ export class MsePlayer extends BasePlayer {
                 } else {
                     const time = now - this.aheadOfBufferSince;
                     if (time > this.MAX_TIME_TO_RECOVER) {
-                        // reasonToJump = `Current time is ahead of end (${buffered}) for ${time} ms.`;
-                        hasReasonToJump = true;
+                        recoveryReason ||= 'playback-ahead-of-buffer';
                     }
                 }
             } else {
@@ -440,11 +437,10 @@ export class MsePlayer extends BasePlayer {
             if (this.currentTimeNotChangedSince !== -1) {
                 const time = now - this.currentTimeNotChangedSince;
                 if (time > this.MAX_TIME_TO_RECOVER) {
-                    // reasonToJump = `Current time not changed for ${time} ms.`;
-                    hasReasonToJump = true;
+                    recoveryReason ||= 'playback-time-stalled';
                 }
             }
-            if (!hasReasonToJump) {
+            if (!recoveryReason) {
                 return;
             }
             let waitingForSeekEnd = 0;
@@ -456,10 +452,16 @@ export class MsePlayer extends BasePlayer {
                 this.tag.removeEventListener('seeked', this.onSeekEnd);
                 this.seekingSince = -1;
             }
-            // console.info(`${reasonToJump} Jumping to the end. ${waitingForSeekEnd}`);
-
             if (Math.abs(end - currentTime) <= 0.05) {
                 return;
+            }
+            if (this.lastRecoveryLogAt === -1 || now - this.lastRecoveryLogAt >= 5000) {
+                this.lastRecoveryLogAt = now;
+                console.warn(
+                    `[${this.name}] playback recovery reason=${recoveryReason} current=${currentTime.toFixed(
+                        3,
+                    )} end=${end.toFixed(3)} buffered=${buffered.toFixed(3)} seekWaitMs=${waitingForSeekEnd}`,
+                );
             }
             this.seekingSince = now;
             this.tag.addEventListener('seeked', this.onSeekEnd);
@@ -516,6 +518,12 @@ export class MsePlayer extends BasePlayer {
     private stopConverter(): void {
         this.tag.removeEventListener('seeked', this.onSeekEnd);
         this.seekingSince = -1;
+        this.noDecodedFramesSince = -1;
+        this.currentTimeNotChangedSince = -1;
+        this.bigBufferSince = -1;
+        this.aheadOfBufferSince = -1;
+        this.lastTime = -1;
+        this.lastRecoveryLogAt = -1;
         if (this.pumpTimer) {
             clearTimeout(this.pumpTimer);
             this.pumpTimer = undefined;

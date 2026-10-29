@@ -42,17 +42,25 @@ export class DisplayProfileControl {
         this.busy = true;
         this.adapt.disabled = this.restore.disabled = true;
         this.suspend(true);
+        console.info(`[DisplayProfile] validating initial screen udid=${this.udid}`);
         try {
             const status = await this.request();
             await this.waitForFrame(status.current.override || status.current.physical);
             if (!this.released) {
                 this.suspend(false);
                 this.describe(status);
+                console.info(`[DisplayProfile] initial screen ready udid=${this.udid}`);
             }
         } catch (error: unknown) {
             if (!this.released) {
-                this.message.textContent = error instanceof Error ? error.message : '屏幕配置暂不可用';
+                const detail = error instanceof Error ? error.message : '屏幕配置暂不可用';
+                // Initial validation is advisory. Keeping input suspended here
+                // permanently freezes mobile clients even though the player has
+                // its own current stream geometry and rejects input until it is ready.
+                this.suspend(false);
+                this.message.textContent = `${detail}；已使用当前画面继续触控`;
                 this.reconnect.hidden = false;
+                console.warn(`[DisplayProfile] initial validation failed; touch resumed udid=${this.udid}: ${detail}`);
             }
         } finally {
             this.busy = false;

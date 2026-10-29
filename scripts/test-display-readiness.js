@@ -31,8 +31,8 @@ global.getComputedStyle = () => ({paddingLeft: '0', paddingRight: '0', paddingTo
 const realNow = Date.now;
 Date.now = () => now;
 const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
-const tick = async () => {
-    now += 100;
+const tick = async (elapsed = 100) => {
+    now += elapsed;
     const pending = [...timers.values()]; timers.clear();
     pending.forEach(callback => callback());
     await flush();
@@ -86,6 +86,17 @@ global.fetch = async () => ({ok: true, json: async () => ({success: true, status
     await tick();
     assert.deepStrictEqual(blocked, [true, false]);
     stale.release();
+
+    // A missing profile response or a stale frame must not permanently freeze
+    // mobile input. The touch handler already rejects events until geometry is ready.
+    const timedOut = [];
+    const timeoutPlayer = new WebCodecsPlayer('timeout');
+    const timeout = new DisplayProfileControl('timeout', timeoutPlayer, new Element(), new Element(),
+        value => timedOut.push(value), () => {});
+    await flush();
+    await tick(20100);
+    assert.deepStrictEqual(timedOut, [true, false], 'Initial validation timeout must restore mobile touch');
+    timeout.release();
 
     // MSE can show a valid still desktop at currentTime=0: advancing video
     // time is not required when HAVE_CURRENT_DATA confirms a decoded frame.
