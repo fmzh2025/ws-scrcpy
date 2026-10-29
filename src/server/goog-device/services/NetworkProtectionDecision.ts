@@ -4,6 +4,7 @@ export type NetworkProtectionDecisionInput = {
     expectedIp?: string;
     expectedRoute?: NetworkRouteKind;
     actualIp?: string;
+    actualCountryCode?: string;
     actualRoute: NetworkRouteKind;
     routeConfidence: NetworkRouteConfidence;
     alreadyDrifted: boolean;
@@ -17,6 +18,7 @@ export type NetworkProtectionDecision = {
     confirmedDrift: boolean;
     ipDrift: boolean;
     routeDrift: boolean;
+    domesticHostDirectIpChange: boolean;
     expectedPathVerified: boolean;
     probeIncomplete: boolean;
     guardReadFailed: boolean;
@@ -29,12 +31,18 @@ export type NetworkProtectionDecision = {
 
 export function evaluateNetworkProtection(input: NetworkProtectionDecisionInput): NetworkProtectionDecision {
     const ipDrift = !!input.expectedIp && !!input.actualIp && input.actualIp !== input.expectedIp;
+    const domesticHostDirectIpChange =
+        ipDrift &&
+        input.expectedRoute === 'host-direct' &&
+        input.actualRoute === 'host-direct' &&
+        input.routeConfidence === 'verified' &&
+        input.actualCountryCode?.toUpperCase() === 'CN';
     const routeDrift =
         !!input.expectedRoute &&
         input.actualRoute !== 'unknown' &&
         input.routeConfidence === 'verified' &&
         input.actualRoute !== input.expectedRoute;
-    const confirmedDrift = ipDrift || routeDrift;
+    const confirmedDrift = (ipDrift && !domesticHostDirectIpChange) || routeDrift;
     const expectedPathVerified =
         !!input.expectedIp &&
         !!input.actualIp &&
@@ -54,6 +62,7 @@ export function evaluateNetworkProtection(input: NetworkProtectionDecisionInput)
         confirmedDrift,
         ipDrift,
         routeDrift,
+        domesticHostDirectIpChange,
         expectedPathVerified,
         probeIncomplete: !input.actualIp || input.actualRoute === 'unknown' || input.routeConfidence !== 'verified',
         guardReadFailed,

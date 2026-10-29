@@ -64,6 +64,7 @@ export type NetworkProtectionStatus = {
     allowedProxy?: string;
     guardStatus?: NetworkGuardReadStatus;
     guardError?: string;
+    warning?: 'domestic-host-direct-ip-change';
 };
 
 export type NetworkRouteChange = {

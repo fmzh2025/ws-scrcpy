@@ -11,6 +11,7 @@ function evaluate(overrides = {}) {
         expectedIp: '198.51.100.10',
         expectedRoute: 'host-direct',
         actualIp: '198.51.100.10',
+        actualCountryCode: 'CN',
         actualRoute: 'host-direct',
         routeConfidence: 'verified',
         alreadyDrifted: false,
@@ -23,6 +24,50 @@ function evaluate(overrides = {}) {
 }
 
 assert.strictEqual(evaluate().confirmedDrift, false, 'the expected verified route must remain healthy');
+
+const domesticDirectIpChange = evaluate({ actualIp: '198.51.100.11' });
+assert.strictEqual(
+    domesticDirectIpChange.domesticHostDirectIpChange,
+    true,
+    'a verified domestic host-direct IP rotation must be recognized',
+);
+assert.strictEqual(
+    domesticDirectIpChange.confirmedDrift,
+    false,
+    'a verified domestic host-direct IP rotation must not become blocking drift',
+);
+assert.strictEqual(
+    domesticDirectIpChange.shouldStopApps,
+    false,
+    'a verified domestic host-direct IP rotation must not stop apps',
+);
+
+const foreignDirectIpChange = evaluate({ actualIp: '203.0.113.20', actualCountryCode: 'US' });
+assert.strictEqual(foreignDirectIpChange.confirmedDrift, true, 'a foreign host-direct IP change must remain drift');
+assert.strictEqual(foreignDirectIpChange.shouldStopApps, true, 'a foreign host-direct IP change must stop apps');
+
+const unlocatedDirectIpChange = evaluate({ actualIp: '203.0.113.20', actualCountryCode: undefined });
+assert.strictEqual(
+    unlocatedDirectIpChange.confirmedDrift,
+    true,
+    'a host-direct IP change without verified domestic location must remain drift',
+);
+
+const hostVpnPathChange = evaluate({
+    actualIp: '203.0.113.20',
+    actualCountryCode: 'CN',
+    actualRoute: 'host-vpn',
+});
+assert.strictEqual(hostVpnPathChange.confirmedDrift, true, 'switching to the host VPN must remain drift');
+assert.strictEqual(hostVpnPathChange.shouldStopApps, true, 'switching to the host VPN must stop apps');
+
+const deviceVpnPathChange = evaluate({
+    actualIp: '203.0.113.20',
+    actualCountryCode: 'CN',
+    actualRoute: 'device-vpn',
+});
+assert.strictEqual(deviceVpnPathChange.confirmedDrift, true, 'switching to a device VPN must remain drift');
+assert.strictEqual(deviceVpnPathChange.shouldStopApps, true, 'switching to a device VPN must stop apps');
 
 const unreadableGuard = evaluate({
     guardStatus: 'unavailable',

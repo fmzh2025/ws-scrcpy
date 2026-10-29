@@ -33,6 +33,9 @@ export function statusTone(status: NetworkRouteStatus): NetworkStatusTone {
     if (status.protection.drifted || blockingGuard || !status.ip) {
         return 'danger';
     }
+    if (status.protection.warning === 'domestic-host-direct-ip-change') {
+        return 'warning';
+    }
     if (
         status.protection.guardMode === 'proxy-only' &&
         status.protection.guardStatus &&
@@ -123,6 +126,13 @@ export function hostVpnTrackingMessage(status: NetworkRouteStatus): string {
     }
     if (status.protection.drifted && status.protection.expectedRoute === 'host-direct') {
         return '已检测到宿主物理出口、直连中继或云手机路径变化，业务 App 已停止并断网；请重新确认宿主直连。';
+    }
+    if (
+        status.protection.warning === 'domestic-host-direct-ip-change' &&
+        status.route === 'host-direct' &&
+        status.protection.message
+    ) {
+        return status.protection.message;
     }
     if (status.route === 'device-vpn') {
         return '当前使用手机 VPN，与宿主 VPN 隔离；宿主切换节点不会改变云手机出口。';

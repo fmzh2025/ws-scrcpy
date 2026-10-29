@@ -36,6 +36,7 @@ type StoredDevicePolicy = {
     message?: string;
     guardMode?: 'block-all' | 'proxy-only';
     allowedProxy?: string;
+    warning?: 'domestic-host-direct-ip-change';
 };
 
 type StoredState = {
@@ -407,6 +408,7 @@ export class NetworkRouteMonitor {
             expectedIp: policy.expectedIp,
             expectedRoute: policy.expectedRoute,
             actualIp: actual.ip,
+            actualCountryCode: actual.countryCode,
             actualRoute: route,
             routeConfidence,
             alreadyDrifted: policy.drifted,
@@ -418,7 +420,40 @@ export class NetworkRouteMonitor {
         const excludedPackages =
             policy.expectedRoute === 'device-vpn' && androidVpn.packageName ? [androidVpn.packageName] : [];
 
+        if (decision.domesticHostDirectIpChange && actual.ip) {
+            const previousIp = policy.expectedIp || '未知';
+            let currentGuardState = guardState;
+            if (
+                policy.allowedProxy &&
+                !decision.guardReadFailed &&
+                (decision.proxyGuardMismatch || decision.blockingGuardActive)
+            ) {
+                const guard = await device.setNetworkGuard(true, excludedPackages, policy.allowedProxy);
+                currentGuardState = {
+                    enabled: guard.enabled,
+                    status: guard.supported && guard.enabled ? 'active' : 'unavailable',
+                    allowedProxy: guard.allowedProxy,
+                    error: guard.error,
+                };
+            }
+            policy.expectedIp = actual.ip;
+            policy.drifted = false;
+            policy.guardEngaged = currentGuardState.enabled;
+            policy.guardMode = policy.allowedProxy ? 'proxy-only' : undefined;
+            policy.lastChangedAt = Date.now();
+            policy.warning = 'domestic-host-direct-ip-change';
+            policy.message = `警告：宿主物理直连国内公网 IP 已从 ${previousIp} 变为 ${actual.ip}；路径仍为 host-direct，已自动更新基准，未停止 App、未全断网`;
+            this.policies.set(device.udid, policy);
+            this.saveState();
+            return {
+                ...policy,
+                guardStatus: currentGuardState.status,
+                guardError: currentGuardState.error,
+            };
+        }
+
         if (decision.confirmedDrift) {
+            policy.warning = undefined;
             const mismatchReasons = [
                 decision.ipDrift ? `IP ${actual.ip}（期望 ${policy.expectedIp || '未知'}）` : '',
                 decision.routeDrift ? `路径 ${route}（期望 ${policy.expectedRoute || '未知'}）` : '',
