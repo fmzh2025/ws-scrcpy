@@ -4,6 +4,7 @@ import PushTransfer from '@dead50f7/adbkit/lib/adb/sync/pushtransfer';
 import { spawn } from 'child_process';
 import path from 'path';
 import '../../../vendor/ws-scrcpy/ip-probe.jar';
+import '../../../vendor/ws-scrcpy/tcp-redirector-arm64.bin';
 import { NetInterface } from '../../types/NetInterface';
 import { TypedEmitter } from '../../common/TypedEmitter';
 import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
@@ -54,11 +55,16 @@ export class Device extends TypedEmitter<DeviceEvents> {
         'scrcpy-server.jar',
         'ws_scrcpy.pid',
         'ws-scrcpy-ip-probe.jar',
+        'ws-scrcpy-tcp-redirector',
     ]);
     private static readonly TEMP_PATH = '/data/local/tmp/';
     private static readonly DOWNLOAD_PATH = '/sdcard/Download/';
     private static readonly IP_PROBE_REMOTE_PATH = `${Device.TEMP_PATH}ws-scrcpy-ip-probe.jar`;
     private static readonly IP_PROBE_URL = 'https://ipwho.is/';
+    private static readonly TCP_REDIRECTOR_REMOTE_PATH = `${Device.TEMP_PATH}ws-scrcpy-tcp-redirector`;
+    private static readonly TCP_REDIRECTOR_PID_PATH = `${Device.TEMP_PATH}ws-scrcpy-tcp-redirector.pid`;
+    private static readonly TCP_REDIRECTOR_LOG_PATH = `${Device.TEMP_PATH}ws-scrcpy-tcp-redirector.log`;
+    private static readonly TCP_REDIRECTOR_PORT = 7897;
     private connected = true;
     private pidDetectionVariant: PID_DETECTION = PID_DETECTION.UNKNOWN;
     private client: AdbKitClient;
@@ -75,6 +81,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
     private throttleTimeoutId?: Timeout;
     private lastEmit = 0;
     private ipProbeReady?: Promise<void>;
+    private tcpRedirectorReady?: Promise<void>;
     public readonly TAG: string;
     public readonly descriptor: GoogDeviceDescriptor;
 
@@ -102,12 +109,14 @@ export class Device extends TypedEmitter<DeviceEvents> {
         if (state === 'device') {
             if (!this.connected) {
                 this.ipProbeReady = undefined;
+                this.tcpRedirectorReady = undefined;
             }
             this.connected = true;
             this.properties = undefined;
         } else {
             this.connected = false;
             this.ipProbeReady = undefined;
+            this.tcpRedirectorReady = undefined;
         }
         this.descriptor.state = state;
         this.emitUpdate();
@@ -328,6 +337,65 @@ export class Device extends TypedEmitter<DeviceEvents> {
         }
     }
 
+    private async ensureTcpRedirector(relay: string): Promise<void> {
+        if (!this.tcpRedirectorReady) {
+            this.tcpRedirectorReady = this.ensureTcpRedirectorBinary().catch((error: unknown) => {
+                this.tcpRedirectorReady = undefined;
+                throw error;
+            });
+        }
+        await this.tcpRedirectorReady;
+        const remotePath = Device.TCP_REDIRECTOR_REMOTE_PATH;
+        const pidPath = Device.TCP_REDIRECTOR_PID_PATH;
+        const logPath = Device.TCP_REDIRECTOR_LOG_PATH;
+        const startCommands = [
+            `if test -s ${Device.shellQuote(pidPath)}; then kill "$(cat ${Device.shellQuote(
+                pidPath,
+            )})" >/dev/null 2>&1 || true; fi`,
+            `rm -f ${Device.shellQuote(pidPath)}`,
+            `nohup ${Device.shellQuote(remotePath)} --listen 127.0.0.1:${
+                Device.TCP_REDIRECTOR_PORT
+            } --relay ${Device.shellQuote(relay)} >${Device.shellQuote(logPath)} 2>&1 </dev/null & redirector_pid=$!`,
+            `echo "$redirector_pid" >${Device.shellQuote(pidPath)}`,
+            'sleep 1',
+            `kill -0 "$redirector_pid" >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ':${Device.TCP_REDIRECTOR_PORT} ' && echo __WS_SCRCPY_REDIRECTOR_OK__`,
+        ];
+        const output = await this.runShellCommandAdbKit(`su 0 sh -c ${Device.shellQuote(startCommands.join('; '))}`);
+        if (!output.includes('__WS_SCRCPY_REDIRECTOR_OK__')) {
+            const log = await this.runShellCommandAdbKit(`tail -20 ${Device.shellQuote(logPath)} 2>/dev/null`);
+            throw new Error(
+                `Unable to start the Android transparent TCP redirector: ${log || output || 'unknown error'}`,
+            );
+        }
+    }
+
+    private async ensureTcpRedirectorBinary(): Promise<void> {
+        const remotePath = Device.TCP_REDIRECTOR_REMOTE_PATH;
+        const sourcePath = path.join(__dirname, 'vendor/ws-scrcpy/tcp-redirector-arm64.bin');
+        const transfer = await this.push(sourcePath, remotePath);
+        await new Promise<void>((resolve, reject) => {
+            transfer.once('end', resolve);
+            transfer.once('error', reject);
+        });
+        const output = await this.runShellCommandAdbKit(
+            `chmod 0755 ${Device.shellQuote(remotePath)} && test -x ${Device.shellQuote(
+                remotePath,
+            )} && echo __WS_SCRCPY_REDIRECTOR_BINARY_OK__`,
+        );
+        if (!output.includes('__WS_SCRCPY_REDIRECTOR_BINARY_OK__')) {
+            throw new Error('Unable to install the Android transparent TCP redirector');
+        }
+    }
+
+    private tcpRedirectorStopCommand(): string {
+        const pidPath = Device.TCP_REDIRECTOR_PID_PATH;
+        return (
+            `if test -s ${Device.shellQuote(pidPath)}; then ` +
+            `kill "$(cat ${Device.shellQuote(pidPath)})" >/dev/null 2>&1 || true; fi; ` +
+            `rm -f ${Device.shellQuote(pidPath)}`
+        );
+    }
+
     public async listThirdPartyPackages(): Promise<ThirdPartyPackage[]> {
         if (!this.connected) {
             throw new Error(`Device "${this.udid}" is not connected`);
@@ -378,10 +446,15 @@ export class Device extends TypedEmitter<DeviceEvents> {
             throw new Error(`Device "${this.udid}" is not connected`);
         }
         const chain = 'WS_SCRCPY_GUARD';
+        const redirectChain = 'WS_SCRCPY_REDIR';
         const proxySetting = 'ws_scrcpy_guard_proxy';
         const cleanup = (binary: string): string =>
             `while ${binary} -D OUTPUT -j ${chain} 2>/dev/null; do :; done; ` +
             `${binary} -F ${chain} 2>/dev/null || true; ${binary} -X ${chain} 2>/dev/null || true`;
+        const cleanupRedirect =
+            `while iptables -t nat -D OUTPUT -j ${redirectChain} 2>/dev/null; do :; done; ` +
+            `iptables -t nat -F ${redirectChain} 2>/dev/null || true; ` +
+            `iptables -t nat -X ${redirectChain} 2>/dev/null || true`;
         const packages = await this.listThirdPartyPackages();
         const excluded = new Set(excludedPackages);
         const protectedUids = Array.from(
@@ -394,6 +467,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
         const commands = [
             cleanup('iptables'),
             'command -v ip6tables >/dev/null 2>&1 && { ' + cleanup('ip6tables') + '; }',
+            cleanupRedirect,
             `settings delete global ${proxySetting} >/dev/null 2>&1 || true`,
         ];
         let allowedProxyAddress: string | undefined;
@@ -408,12 +482,23 @@ export class Device extends TypedEmitter<DeviceEvents> {
             allowedProxyAddress = match[1];
             allowedProxyPort = port;
         }
+        if (enabled && allowedProxy) {
+            await this.ensureTcpRedirector(allowedProxy);
+        } else {
+            commands.push(this.tcpRedirectorStopCommand());
+        }
         if (enabled) {
             const rules: string[] = [];
+            const redirectRules: string[] = [];
             protectedUids.forEach((uid) => {
                 if (allowedProxyAddress && allowedProxyPort) {
                     rules.push(
                         `iptables -A ${chain} -p tcp -d ${allowedProxyAddress} --dport ${allowedProxyPort} -m owner --uid-owner ${uid} -j RETURN`,
+                        `iptables -A ${chain} -p tcp -d 127.0.0.1 --dport ${Device.TCP_REDIRECTOR_PORT} -m owner --uid-owner ${uid} -j RETURN`,
+                    );
+                    redirectRules.push(
+                        `iptables -t nat -A ${redirectChain} -p tcp --dport ${allowedProxyPort} -m owner --uid-owner ${uid} -j RETURN`,
+                        `iptables -t nat -A ${redirectChain} -p tcp -m owner --uid-owner ${uid} -j REDIRECT --to-ports ${Device.TCP_REDIRECTOR_PORT}`,
                     );
                 }
                 rules.push(`iptables -A ${chain} -m owner --uid-owner ${uid} -j REJECT`);
@@ -427,7 +512,12 @@ export class Device extends TypedEmitter<DeviceEvents> {
                 `command -v ip6tables >/dev/null 2>&1 && { ip6tables -N ${chain}; ${ip6Rules}ip6tables -I OUTPUT 1 -j ${chain}; }`,
             );
             if (allowedProxy) {
-                commands.push(`settings put global ${proxySetting} ${Device.shellQuote(allowedProxy)}`);
+                commands.push(
+                    `iptables -t nat -N ${redirectChain}`,
+                    ...redirectRules,
+                    `iptables -t nat -I OUTPUT 1 -j ${redirectChain}`,
+                    `settings put global ${proxySetting} ${Device.shellQuote(allowedProxy)}`,
+                );
             }
         }
         commands.push('echo __WS_SCRCPY_GUARD_OK__');
@@ -461,15 +551,26 @@ export class Device extends TypedEmitter<DeviceEvents> {
             return { enabled: false, status: 'unavailable', error: `Device "${this.udid}" is not connected` };
         }
         const chain = 'WS_SCRCPY_GUARD';
+        const redirectChain = 'WS_SCRCPY_REDIR';
         const proxySetting = 'ws_scrcpy_guard_proxy';
         let lastError = 'Unable to inspect the Android network guard';
         for (let attempt = 0; attempt < 2; attempt += 1) {
             try {
-                const [chainProbe, outputProbe, proxyProbe] = await Promise.all([
-                    this.runShellCommandWithExitCode(`su 0 iptables -S ${chain} 2>/dev/null`),
-                    this.runShellCommandWithExitCode('su 0 iptables -S OUTPUT 2>/dev/null'),
-                    this.runShellCommandWithExitCode(`settings get global ${proxySetting}`),
-                ]);
+                const [chainProbe, outputProbe, proxyProbe, redirectChainProbe, redirectOutputProbe, redirectorProbe] =
+                    await Promise.all([
+                        this.runShellCommandWithExitCode(`su 0 iptables -S ${chain} 2>/dev/null`),
+                        this.runShellCommandWithExitCode('su 0 iptables -S OUTPUT 2>/dev/null'),
+                        this.runShellCommandWithExitCode(`settings get global ${proxySetting}`),
+                        this.runShellCommandWithExitCode(`su 0 iptables -t nat -S ${redirectChain} 2>/dev/null`),
+                        this.runShellCommandWithExitCode('su 0 iptables -t nat -S OUTPUT 2>/dev/null'),
+                        this.runShellCommandWithExitCode(
+                            `su 0 sh -c ${Device.shellQuote(
+                                `test -s ${Device.TCP_REDIRECTOR_PID_PATH} && ` +
+                                    `kill -0 "$(cat ${Device.TCP_REDIRECTOR_PID_PATH})" >/dev/null 2>&1 && ` +
+                                    `ss -ltn 2>/dev/null | grep -q ':${Device.TCP_REDIRECTOR_PORT} ' && echo active`,
+                            )}`,
+                        ),
+                    ]);
                 if (outputProbe.exitCode !== 0 || proxyProbe.exitCode !== 0) {
                     throw new Error(
                         `Network guard query failed (OUTPUT=${outputProbe.exitCode}, settings=${proxyProbe.exitCode})`,
@@ -487,11 +588,29 @@ export class Device extends TypedEmitter<DeviceEvents> {
                 const markedProxy = /^(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})$/.test(proxyProbe.output)
                     ? proxyProbe.output
                     : undefined;
+                const allowedProxy =
+                    markedProxy || (proxyAddress && proxyPort ? `${proxyAddress}:${proxyPort}` : undefined);
+                if (allowedProxy) {
+                    const redirectHooked = redirectOutputProbe.output
+                        .split('\n')
+                        .some((line) => line.trim() === `-A OUTPUT -j ${redirectChain}`);
+                    const redirectConfigured =
+                        redirectChainProbe.exitCode === 0 && redirectChainProbe.output.includes('-j REDIRECT');
+                    const redirectorActive =
+                        redirectorProbe.exitCode === 0 && redirectorProbe.output.trim() === 'active';
+                    if (!redirectHooked || !redirectConfigured || !redirectorActive) {
+                        return {
+                            enabled: false,
+                            status: 'missing',
+                            allowedProxy,
+                            error: 'Android transparent TCP redirector is not active',
+                        };
+                    }
+                }
                 return {
                     enabled: true,
                     status: 'active',
-                    allowedProxy:
-                        markedProxy || (proxyAddress && proxyPort ? `${proxyAddress}:${proxyPort}` : undefined),
+                    allowedProxy,
                 };
             } catch (error: unknown) {
                 lastError = error instanceof Error ? error.message : 'Unable to inspect the Android network guard';

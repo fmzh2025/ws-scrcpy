@@ -66,7 +66,7 @@ export const common = () => {
                     ],
                 },
                 {
-                    test: /\.jar$/,
+                    test: /\.(?:jar|bin)$/,
                     use: [
                         {
                             loader: 'file-loader',
