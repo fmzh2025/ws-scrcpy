@@ -6,7 +6,16 @@ import webpack from 'webpack';
 export function createSilkPulseAssets(root: string) {
     const configPath = process.env.SILKPULSE_PUBLIC_CONFIG || path.join(root, '.silkpulse.public.local.json');
     const raw = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : {};
-    const allowed = ['server', 'projectId', 'deviceToken', 'environment', 'tags', 'testDeviceIds', 'sessionMinutes'];
+    const allowed = [
+        'server',
+        'projectId',
+        'deviceToken',
+        'environment',
+        'tags',
+        'testDeviceIds',
+        'sessionMinutes',
+        'streamEnabledByDefault',
+    ];
     if (Object.keys(raw).some((key) => !allowed.includes(key))) {
         throw new Error(
             'SilkPulse public configuration contains unsupported fields; never use a private key file here.',
@@ -26,6 +35,7 @@ export function createSilkPulseAssets(root: string) {
         tags: strings(raw.tags),
         testDeviceIds: strings(raw.testDeviceIds),
         sessionMinutes: Math.min(120, Math.max(1, Number(raw.sessionMinutes) || 30)),
+        streamEnabledByDefault: raw.streamEnabledByDefault === true,
     };
     const bootstrap = fs
         .readFileSync(path.join(root, 'src/public/silkpulse-bootstrap.js'), 'utf8')

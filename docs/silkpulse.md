@@ -17,7 +17,7 @@
 
 复制 `silkpulse.public.example.json` 为被 Git 忽略的 `.silkpulse.public.local.json`，填入业务项目的 **projectId 和 deviceToken**。可用 `SILKPULSE_PUBLIC_CONFIG=/absolute/path/public.json` 指定其他位置。该配置会进入浏览器，deviceToken 是设备注册令牌，不是项目 API Key。
 
-允许的字段只有：`server`、`projectId`、`deviceToken`、`environment`、`tags`、`testDeviceIds`、`sessionMinutes`。包含其他字段时构建直接失败，防止误用私有配置。未提供项目/令牌时不加载 SDK，业务仍可运行。修改公开配置后需要重新构建。
+允许的字段只有：`server`、`projectId`、`deviceToken`、`environment`、`tags`、`testDeviceIds`、`sessionMinutes`、`streamEnabledByDefault`。包含其他字段时构建直接失败，防止误用私有配置。未提供项目/令牌时不加载 SDK，业务仍可运行。修改公开配置后需要重新构建。
 
 私有配置已安全保存在：
 
@@ -30,7 +30,7 @@
 
 ## 开启、关闭与指定设备
 
-生产环境默认关闭；没有全局默认开启选项。
+默认关闭。排障部署可将公开配置的 `streamEnabledByDefault` 设为 `true`，只对 URL 中包含 `udid` 的流页面自动开启；设备列表等其他页面仍不采集。显式 `?silkpulse=0` 始终优先，可关闭当前标签页采集。
 
 - 当前标签页排障：打开 `http://192.168.31.16:8000/?silkpulse=1#!action=stream&udid=emulator-5554&player=mse`。
 - 关闭：打开同一页面，把查询参数改为 `?silkpulse=0`；或在验证页点击“关闭本会话调试”。

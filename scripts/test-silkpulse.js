@@ -3,13 +3,15 @@ const fs = require('fs');
 const vm = require('vm');
 const template = fs.readFileSync('src/public/silkpulse-bootstrap.js', 'utf8');
 
-function boot({ query = '', hash = '#!action=stream&udid=emulator-5554&player=mse', session, blockedStorage = false, allowDevice = false } = {}) {
+function boot({ query = '', hash = '#!action=stream&udid=emulator-5554&player=mse', session, blockedStorage = false,
+    allowDevice = false, streamEnabledByDefault = false } = {}) {
     const scripts = [];
     const timers = [];
     const attrs = {};
     const storage = new Map(session ? [['ws-scrcpy:silkpulse-session', JSON.stringify(session)]] : []);
     const config = { server: 'https://debug.foxhello.com', projectId: 'test-project', deviceToken: 'test-device-token',
-        environment: 'production', tags: ['cloudphone-h5'], testDeviceIds: allowDevice ? ['test-device'] : [], sessionMinutes: 30 };
+        environment: 'production', tags: ['cloudphone-h5'], testDeviceIds: allowDevice ? ['test-device'] : [],
+        sessionMinutes: 30, streamEnabledByDefault };
     const context = vm.createContext({ URL, URLSearchParams, Promise, Date, Math,
         window: {}, location: { href: 'http://localhost:8000/' + query + hash },
         history: { state: null, replaceState(_s, _t, url) { context.location.href = url; } },
@@ -55,7 +57,13 @@ function boot({ query = '', hash = '#!action=stream&udid=emulator-5554&player=ms
     await timeout.status.ready;
     assert.strictEqual(timeout.status.state, 'timeout', 'a hanging SDK must release business startup');
     assert.strictEqual(boot({ allowDevice: true }).scripts.length, 1);
+    assert.strictEqual(boot({ streamEnabledByDefault: true }).scripts.length, 1,
+        'configured stream pages must load diagnostics without a per-browser allow-list');
+    assert.strictEqual(boot({ hash: '#!action=list', streamEnabledByDefault: true }).scripts.length, 0,
+        'default stream diagnostics must not enable unrelated pages');
     assert.strictEqual(boot({ query: '?silkpulse=0', allowDevice: true }).scripts.length, 0, 'off takes precedence');
+    assert.strictEqual(boot({ query: '?silkpulse=0', streamEnabledByDefault: true }).scripts.length, 0,
+        'an explicit opt-out must override stream defaults');
     assert.strictEqual(boot({ session: { enabled: true, expiresAt: Date.now() - 1000 } }).scripts.length, 0);
     assert.strictEqual(boot({ blockedStorage: true }).scripts.length, 0);
     assert.strictEqual(boot({ query: '?silkpulse=1', blockedStorage: true }).scripts.length, 1);

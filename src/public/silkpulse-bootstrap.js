@@ -34,7 +34,9 @@
         try { history.replaceState(history.state, '', url.href); } catch (_) {}
     }
     var enabled = session && session.enabled === false ? false :
-        !!(session && session.enabled && session.expiresAt > now) || config.testDeviceIds.indexOf(deviceId) !== -1;
+        !!(session && session.enabled && session.expiresAt > now) ||
+        config.testDeviceIds.indexOf(deviceId) !== -1 ||
+        !!(config.streamEnabledByDefault && udid);
     var finish;
     var ready = new Promise(function (resolve) { finish = resolve; });
     var status = window.WSSilkPulse = {
